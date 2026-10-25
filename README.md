@@ -32,3 +32,4 @@ Redeploy after changing variables.
 - `GET  /siri?key=…&by=Rudy&text=…` – used by the Siri shortcut, replies with one sentence
 
 All routes require the household key (`x-ledger-key` header or `key` query parameter).
+
