@@ -1,5 +1,5 @@
 // JSON API for the ledger app. All routes need the household key.
-import { HttpError, checkAuth, json, text, getSettings, getMonth, getRecurring, writeJSON, mutateList, listMonthKeys,
+import { HttpError, checkAuth, json, text, getSettings, getMonth, getRecurring, getIncome, incomeMonthlyUSD, writeJSON, mutateList, listMonthKeys,
   parseNote, saveExpenses, toUSD, todayIn, shiftMonth, monthStats, analysisPrompt, rangeAnalysisPrompt, claudeMessage, analysisModel, newId, TAGS, CURRENCIES, DEFAULT_SETTINGS } from "../lib/ledger.mjs";
 
 export const config = { path: "/api/*" };
@@ -18,9 +18,9 @@ export default async (req) => {
     if(route==='state' && req.method==='GET'){
       const months=(url.searchParams.get('months')||'').split(',').filter(m=>/^\d{4}-\d{2}$/.test(m));
       const keys = months.length? months : (()=>{ const cm=today.slice(0,7); const a=[]; for(let i=5;i>=0;i--) a.push(shiftMonth(cm,-i)); return a; })();
-      const [recurring, monthKeys, ...docs] = await Promise.all([getRecurring(), listMonthKeys(), ...keys.map(k=>getMonth(k))]);
+      const [recurring, income, monthKeys, ...docs] = await Promise.all([getRecurring(), getIncome(), listMonthKeys(), ...keys.map(k=>getMonth(k))]);
       const out={}; keys.forEach((k,i)=>out[k]=docs[i]);
-      return json({settings, recurring, months:out, monthKeys, today, serverTime:Date.now()});
+      return json({settings, recurring, income, months:out, monthKeys, today, serverTime:Date.now()});
     }
     if(route==='month' && req.method==='GET'){
       const mk=url.searchParams.get('m'); if(!/^\d{4}-\d{2}$/.test(mk||'')) throw new HttpError(400,'Bad month');
@@ -52,6 +52,22 @@ export default async (req) => {
       const {id, month}=body; if(!id || !/^\d{4}-\d{2}$/.test(month||'')) throw new HttpError(400,'Need id and month');
       await mutateList('months/'+month, items=>items.filter(x=>x.id!==id)); return json({ok:true});
     }
+    if(route==='expenses/delete' && req.method==='POST'){
+      const list=Array.isArray(body.items)? body.items.filter(x=>x && x.id && /^\d{4}-\d{2}$/.test(x.month||'')).slice(0,500) : [];
+      if(!list.length) throw new HttpError(400,'Nothing to delete');
+      const byMonth={}; for(const x of list){ (byMonth[x.month]=byMonth[x.month]||new Set()).add(String(x.id)); }
+      let removed=0; for(const [mk,ids] of Object.entries(byMonth)){ await mutateList('months/'+mk, items=>{ const keep=items.filter(x=>!ids.has(x.id)); removed+=items.length-keep.length; return keep; }); }
+      return json({ok:true, removed});
+    }
+
+    // ---- income ----
+    if(route==='income' && req.method==='POST'){
+      const r=body.item||{};
+      const doc={ id:r.id||newId(), name:String(r.name||'').slice(0,60)||'Income', amount:Number(r.amount)||0, currency:CURRENCIES.includes(r.currency)?r.currency:settings.base, period:r.period==='yearly'?'yearly':'monthly', by:String(r.by||'').slice(0,40), active:r.active!==false, ts:r.ts||Date.now() };
+      const items=await mutateList('income', items=>{ const i=items.findIndex(x=>x.id===doc.id); if(i>=0) items[i]=doc; else items.push(doc); return items; });
+      return json({saved:doc, income:items});
+    }
+    if(route==='income' && req.method==='DELETE'){ const items=await mutateList('income', items=>items.filter(x=>x.id!==body.id)); return json({income:items}); }
 
     // ---- recurring ----
     if(route==='recurring' && req.method==='POST'){
@@ -73,21 +89,21 @@ export default async (req) => {
     if(route==='analyze' && req.method==='POST'){
       const sel=(Array.isArray(body.months)? body.months : [body.month]).filter(m=>/^\d{4}-\d{2}$/.test(m||'')).sort().slice(-24);
       const months = sel.length? sel : [today.slice(0,7)];
-      const recurring=await getRecurring();
+      const [recurring, income]=await Promise.all([getRecurring(), getIncome()]); const incomeUSD=incomeMonthlyUSD(settings, income);
       let p;
       if(months.length===1){
         const mk=months[0];
         const [cur, m1, m2] = await Promise.all([getMonth(mk), getMonth(shiftMonth(mk,-1)), getMonth(shiftMonth(mk,-2))]);
         const st=monthStats(settings,cur,recurring,mk,today), s1=monthStats(settings,m1,recurring,shiftMonth(mk,-1),today), s2=monthStats(settings,m2,recurring,shiftMonth(mk,-2),today);
         if(!st.count && !recurring.length) return text('Nothing to analyze yet. Log a few expenses first.');
-        p=analysisPrompt(settings, mk, st, s1, s2, recurring, today);
+        p=analysisPrompt(settings, mk, st, s1, s2, recurring, today, incomeUSD);
       } else {
         const n=months.length; const priorKeys=[]; for(let i=n;i>=1;i--) priorKeys.push(shiftMonth(months[0],-i));
         const docs=await Promise.all([...months, ...priorKeys].map(k=>getMonth(k)));
         const perMonth=months.map((mk,i)=>({mk, st:monthStats(settings,docs[i],recurring,mk,today)}));
         const prior={total:0,byTag:{}}; priorKeys.forEach((mk,i)=>{ const st=monthStats(settings,docs[n+i],recurring,mk,today); prior.total+=st.total; for(const [t,v] of Object.entries(st.byTag)) prior.byTag[t]=(prior.byTag[t]||0)+v; });
         if(!perMonth.some(x=>x.st.count) && !recurring.length) return text('Nothing to analyze yet. Log a few expenses first.');
-        p=rangeAnalysisPrompt(settings, perMonth, prior, recurring);
+        p=rangeAnalysisPrompt(settings, perMonth, prior, recurring, incomeUSD);
       }
       const up = await claudeMessage({ model: analysisModel(), system:p.system, messages:[{role:'user',content:p.user}], max_tokens:700, stream:true });
       const dec=new TextDecoder(), enc=new TextEncoder(); let buf='';
