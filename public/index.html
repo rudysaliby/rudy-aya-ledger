@@ -29,8 +29,8 @@
   --font-display:'Outfit',system-ui,-apple-system,sans-serif;
   --font-body:'Manrope',system-ui,-apple-system,'Segoe UI',sans-serif;
   --font-num:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
-  --sat:env(safe-area-inset-top,0px); --sab:env(safe-area-inset-bottom,0px); --sal:env(safe-area-inset-left,0px); --sar:env(safe-area-inset-right,0px);
-  --tab-h:64px; --bottom-gap:max(0px,calc(var(--sab) - 14px));
+  --sat:min(env(safe-area-inset-top,0px),64px); --sab:min(env(safe-area-inset-bottom,0px),34px); --sal:env(safe-area-inset-left,0px); --sar:env(safe-area-inset-right,0px);
+  --tab-h:62px; --bottom-gap:max(0px,calc(var(--sab) - 16px));
   color-scheme:dark;
 }
 @media (prefers-color-scheme: light){
