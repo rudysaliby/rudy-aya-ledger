@@ -49,6 +49,11 @@ export async function getMonth(mk){ const m = await readJSON('months/'+mk, null)
 export async function putMonth(mk, items){ await writeJSON('months/'+mk, {items}); }
 export async function getRecurring(){ const r = await readJSON('recurring', null); return (r && Array.isArray(r.items)) ? r.items : []; }
 export async function putRecurring(items){ await writeJSON('recurring', {items}); }
+/** Month keys that hold at least one document, oldest first. */
+export async function listMonthKeys(){
+  try{ const {blobs} = await store().list({prefix:'months/'}); return blobs.map(b=>b.key.replace(/^months\//,'')).filter(k=>/^\d{4}-\d{2}$/.test(k)).sort(); }
+  catch(e){ return []; }
+}
 /** Read-modify-write one list document with an etag check, retried, so two phones saving at once never lose an entry. */
 export async function mutateList(key, fn){
   const s = store();
@@ -164,6 +169,7 @@ export function monthStats(settings, items, recurring, mk, today){
   const dim=daysInMonth(mk); const cm=today.slice(0,7); const elapsed = mk===cm? Number(today.slice(8,10)) : (mk<cm? dim : 0);
   return {items,total,byTag,byPerson,byDay,fixed,dim,elapsed,count:items.length};
 }
+export const monthLabel=k=>{ const [y,m]=k.split('-').map(Number); return new Date(Date.UTC(y,m-1,1)).toLocaleString('en-US',{month:'long',year:'numeric',timeZone:'UTC'}); };
 export function analysisPrompt(settings, mk, st, m1, m2, recurring, today){
   const usd=v=>Math.round(v);
   const tagLine=s=>Object.entries(s.byTag).sort((a,b)=>b[1]-a[1]).map(([t,v])=>`${t} ${usd(v)}`).join(', ')||'none';
@@ -171,15 +177,41 @@ export function analysisPrompt(settings, mk, st, m1, m2, recurring, today){
   const big=[...st.items].sort((a,b)=>b.usd-a.usd).slice(0,8).map(e=>`${e.date.slice(5)} ${e.desc} (${e.tag}, ${e.by||'?'}) ${usd(e.usd)}`).join('; ')||'none';
   const recs=recurring.filter(r=>r.active!==false).map(r=>{ const u=toUSD(settings,r.amount,r.currency); return `${r.name} [${r.kind||'other'}] ${usd(r.period==='yearly'?u/12:u)}/mo${r.period==='yearly'?' (billed yearly)':''}`; }).join('; ')||'none';
   const budget=Number(settings.budget)? `Monthly budget: ${usd(toUSD(settings, settings.budget, settings.base))}.` : 'No budget set.';
-  const label=k=>{ const [y,m]=k.split('-').map(Number); return new Date(Date.UTC(y,m-1,1)).toLocaleString('en-US',{month:'long',year:'numeric',timeZone:'UTC'}); };
+  const label=monthLabel;
   return {
-    system: `You are a careful, friendly household finance coach for a two-person household (${settings.members.join(' and ')}) living in Lebanon. Reply in plain text only (no markdown symbols such as # or **), at most 230 words, using exactly these short section titles on their own lines: Headline / Watch out / Try this / Fixed costs. In "Watch out" name the categories or items that look high or unusual with their numbers. In "Try this" give 3 concrete, specific changes, each with a rough monthly saving in dollars. In "Fixed costs" say in one or two sentences how large subscriptions and salaries are relative to everything and whether anything there deserves a second look. Be specific to the numbers; no generic advice; no greetings. Amounts are in USD.`,
+    system: coachSystem(settings),
     user: `Month in view: ${label(mk)}, ${st.elapsed} of ${st.dim} days elapsed. Day-to-day total ${usd(st.total)} across ${st.count} items, daily average ${st.elapsed? usd(st.total/st.elapsed):0}, projected month-end day-to-day ${st.elapsed? usd(st.total/st.elapsed*st.dim):0}.
 By category: ${tagLine(st)}. By person: ${perLine(st)}.
 Largest items: ${big}.
 Previous month (${label(shiftMonth(mk,-1))}, full): total ${usd(m1.total)}; by category: ${tagLine(m1)}; by person: ${perLine(m1)}.
 Two months ago (${label(shiftMonth(mk,-2))}): total ${usd(m2.total)}; by category: ${tagLine(m2)}.
 Fixed monthly costs (${usd(st.fixed)}/mo in total): ${recs}.
+${budget}`,
+  };
+}
+function coachSystem(settings){
+  return `You are a careful, friendly household finance coach for a two-person household (${settings.members.join(' and ')}) living in Lebanon. Reply in plain text only (no markdown symbols such as # or **), at most 230 words, using exactly these short section titles on their own lines: Headline / Watch out / Try this / Fixed costs. In "Watch out" name the categories or items that look high or unusual with their numbers. In "Try this" give 3 concrete, specific changes, each with a rough monthly saving in dollars. In "Fixed costs" say in one or two sentences how large subscriptions and salaries are relative to everything and whether anything there deserves a second look. Be specific to the numbers; no generic advice; no greetings. Amounts are in USD.`;
+}
+/** Prompt for a range of months (2 or more). perMonth: [{mk, st}] oldest first; prior: stats for the same number of months before the range. */
+export function rangeAnalysisPrompt(settings, perMonth, prior, recurring){
+  const usd=v=>Math.round(v);
+  const agg={byTag:{},byPerson:{},total:0,count:0,items:[]};
+  for(const {st} of perMonth){ agg.total+=st.total; agg.count+=st.count; agg.items.push(...st.items); for(const [t,v] of Object.entries(st.byTag)) agg.byTag[t]=(agg.byTag[t]||0)+v; for(const [p,v] of Object.entries(st.byPerson)) agg.byPerson[p]=(agg.byPerson[p]||0)+v; }
+  const n=perMonth.length; const fixed=perMonth[0].st.fixed;
+  const tagLine=s=>Object.entries(s.byTag).sort((a,b)=>b[1]-a[1]).map(([t,v])=>`${t} ${usd(v)} (${usd(v/n)}/mo)`).join(', ')||'none';
+  const perLine=s=>Object.entries(s.byPerson).map(([p,v])=>`${p} ${usd(v)}`).join(', ')||'none';
+  const months=perMonth.map(({mk,st})=>`${monthLabel(mk)} ${usd(st.total)}`).join(', ');
+  const big=[...agg.items].sort((a,b)=>b.usd-a.usd).slice(0,8).map(e=>`${e.date} ${e.desc} (${e.tag}, ${e.by||'?'}) ${usd(e.usd)}`).join('; ')||'none';
+  const recs=recurring.filter(r=>r.active!==false).map(r=>{ const u=toUSD(settings,r.amount,r.currency); return `${r.name} [${r.kind||'other'}] ${usd(r.period==='yearly'?u/12:u)}/mo`; }).join('; ')||'none';
+  const budget=Number(settings.budget)? `Monthly budget: ${usd(toUSD(settings, settings.budget, settings.base))}.` : 'No budget set.';
+  const priorLine = prior && prior.total ? `The ${n} months before that: day-to-day total ${usd(prior.total)} (${usd(prior.total/n)}/mo); by category: ${Object.entries(prior.byTag).sort((a,b)=>b[1]-a[1]).map(([t,v])=>`${t} ${usd(v)}`).join(', ')||'none'}.` : 'No data for the months before this range.';
+  return {
+    system: coachSystem(settings).replace('Month in view','Period in view') + ' The data covers several months: talk about monthly averages and the trend from month to month, and name the months where spending jumped.',
+    user: `Period in view: ${monthLabel(perMonth[0].mk)} to ${monthLabel(perMonth[n-1].mk)} (${n} months). Day-to-day per month: ${months}. Total ${usd(agg.total)} across ${agg.count} items, average ${usd(agg.total/n)} per month.
+By category over the period: ${tagLine(agg)}. By person: ${perLine(agg)}.
+Largest single items: ${big}.
+${priorLine}
+Fixed monthly costs (${usd(fixed)}/mo in total, ${usd(fixed*n)} over the period): ${recs}.
 ${budget}`,
   };
 }

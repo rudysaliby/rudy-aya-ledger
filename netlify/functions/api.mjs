@@ -1,6 +1,6 @@
 // JSON API for the ledger app. All routes need the household key.
-import { HttpError, checkAuth, json, text, getSettings, getMonth, getRecurring, writeJSON, mutateList,
-  parseNote, saveExpenses, toUSD, todayIn, shiftMonth, monthStats, analysisPrompt, claudeMessage, analysisModel, newId, TAGS, CURRENCIES, DEFAULT_SETTINGS } from "../lib/ledger.mjs";
+import { HttpError, checkAuth, json, text, getSettings, getMonth, getRecurring, writeJSON, mutateList, listMonthKeys,
+  parseNote, saveExpenses, toUSD, todayIn, shiftMonth, monthStats, analysisPrompt, rangeAnalysisPrompt, claudeMessage, analysisModel, newId, TAGS, CURRENCIES, DEFAULT_SETTINGS } from "../lib/ledger.mjs";
 
 export const config = { path: "/api/*" };
 
@@ -18,9 +18,9 @@ export default async (req) => {
     if(route==='state' && req.method==='GET'){
       const months=(url.searchParams.get('months')||'').split(',').filter(m=>/^\d{4}-\d{2}$/.test(m));
       const keys = months.length? months : (()=>{ const cm=today.slice(0,7); const a=[]; for(let i=5;i>=0;i--) a.push(shiftMonth(cm,-i)); return a; })();
-      const [recurring, ...docs] = await Promise.all([getRecurring(), ...keys.map(k=>getMonth(k))]);
+      const [recurring, monthKeys, ...docs] = await Promise.all([getRecurring(), listMonthKeys(), ...keys.map(k=>getMonth(k))]);
       const out={}; keys.forEach((k,i)=>out[k]=docs[i]);
-      return json({settings, recurring, months:out, today, serverTime:Date.now()});
+      return json({settings, recurring, months:out, monthKeys, today, serverTime:Date.now()});
     }
     if(route==='month' && req.method==='GET'){
       const mk=url.searchParams.get('m'); if(!/^\d{4}-\d{2}$/.test(mk||'')) throw new HttpError(400,'Bad month');
@@ -71,11 +71,24 @@ export default async (req) => {
 
     // ---- AI analysis (streams plain text) ----
     if(route==='analyze' && req.method==='POST'){
-      const mk=/^\d{4}-\d{2}$/.test(body.month||'')? body.month : today.slice(0,7);
-      const [recurring, cur, m1, m2] = await Promise.all([getRecurring(), getMonth(mk), getMonth(shiftMonth(mk,-1)), getMonth(shiftMonth(mk,-2))]);
-      const st=monthStats(settings,cur,recurring,mk,today), s1=monthStats(settings,m1,recurring,shiftMonth(mk,-1),today), s2=monthStats(settings,m2,recurring,shiftMonth(mk,-2),today);
-      if(!st.count && !recurring.length) return text('Nothing to analyze yet. Log a few expenses first.');
-      const p=analysisPrompt(settings, mk, st, s1, s2, recurring, today);
+      const sel=(Array.isArray(body.months)? body.months : [body.month]).filter(m=>/^\d{4}-\d{2}$/.test(m||'')).sort().slice(-24);
+      const months = sel.length? sel : [today.slice(0,7)];
+      const recurring=await getRecurring();
+      let p;
+      if(months.length===1){
+        const mk=months[0];
+        const [cur, m1, m2] = await Promise.all([getMonth(mk), getMonth(shiftMonth(mk,-1)), getMonth(shiftMonth(mk,-2))]);
+        const st=monthStats(settings,cur,recurring,mk,today), s1=monthStats(settings,m1,recurring,shiftMonth(mk,-1),today), s2=monthStats(settings,m2,recurring,shiftMonth(mk,-2),today);
+        if(!st.count && !recurring.length) return text('Nothing to analyze yet. Log a few expenses first.');
+        p=analysisPrompt(settings, mk, st, s1, s2, recurring, today);
+      } else {
+        const n=months.length; const priorKeys=[]; for(let i=n;i>=1;i--) priorKeys.push(shiftMonth(months[0],-i));
+        const docs=await Promise.all([...months, ...priorKeys].map(k=>getMonth(k)));
+        const perMonth=months.map((mk,i)=>({mk, st:monthStats(settings,docs[i],recurring,mk,today)}));
+        const prior={total:0,byTag:{}}; priorKeys.forEach((mk,i)=>{ const st=monthStats(settings,docs[n+i],recurring,mk,today); prior.total+=st.total; for(const [t,v] of Object.entries(st.byTag)) prior.byTag[t]=(prior.byTag[t]||0)+v; });
+        if(!perMonth.some(x=>x.st.count) && !recurring.length) return text('Nothing to analyze yet. Log a few expenses first.');
+        p=rangeAnalysisPrompt(settings, perMonth, prior, recurring);
+      }
       const up = await claudeMessage({ model: analysisModel(), system:p.system, messages:[{role:'user',content:p.user}], max_tokens:700, stream:true });
       const dec=new TextDecoder(), enc=new TextEncoder(); let buf='';
       const stream=new ReadableStream({ async start(ctl){ const reader=up.body.getReader(); try{ while(true){ const {value,done}=await reader.read(); if(done) break; buf+=dec.decode(value,{stream:true}); let i; while((i=buf.indexOf('\n'))>=0){ const line=buf.slice(0,i).trim(); buf=buf.slice(i+1); if(!line.startsWith('data:')) continue; try{ const ev=JSON.parse(line.slice(5)); if(ev.type==='content_block_delta' && ev.delta && ev.delta.type==='text_delta') ctl.enqueue(enc.encode(ev.delta.text)); if(ev.type==='error') ctl.enqueue(enc.encode('\n[Claude error: '+(ev.error?.message||'unknown')+']')); }catch(e){} } } }catch(e){ ctl.enqueue(enc.encode('\n[interrupted]')); } ctl.close(); } });
