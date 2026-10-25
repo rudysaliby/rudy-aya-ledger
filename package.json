@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Shared expense ledger for two phones: voice entry via Siri, Claude parsing, fixed-cost planning, dashboard and AI analysis.",
   "dependencies": {
-    "@netlify/blobs": "^9.1.2"
+    "@netlify/blobs": "^11.1.6"
   },
   "engines": {
     "node": ">=20"

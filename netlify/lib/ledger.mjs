@@ -60,7 +60,8 @@ export async function mutateList(key, fn){
     let res;
     try{ res = await s.setJSON(key, {items: next}, opts); }
     catch(e){ if(attempt===4) throw e; res={modified:false}; }
-    if(res.modified !== false) return next;
+    // Older library versions resolve undefined: treat that as a plain successful write.
+    if(!res || res.modified !== false) return next;
     await new Promise(r=>setTimeout(r, 60 + Math.random()*120));
   }
   throw new HttpError(409, 'The ledger was busy. Try again.');
