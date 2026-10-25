@@ -68,7 +68,7 @@ h2{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
 .avatar{width:30px;height:30px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff;background:var(--faint)}
 
 /* Content */
-main{padding-left:max(16px,var(--sal));padding-right:max(16px,var(--sar));padding-block:16px calc(84px + var(--sab));max-width:720px;margin:0 auto;width:100%}
+main{padding-left:max(16px,var(--sal));padding-right:max(16px,var(--sar));padding-block:16px calc(72px + max(0px,calc(var(--sab) - 14px)));max-width:720px;margin:0 auto;width:100%}
 section.screen{display:flex;flex-direction:column;gap:18px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px}
 .row-between{display:flex;align-items:center;justify-content:space-between;gap:12px}
@@ -88,12 +88,6 @@ section.screen{display:flex;flex-direction:column;gap:18px}
 .capture-row{display:flex;align-items:flex-end;gap:10px}
 .capture textarea{flex:1;min-width:0;resize:none;border:0;background:var(--surface-2);border-radius:12px;padding:12px 14px;font-size:17px;line-height:1.35;max-height:120px;color:var(--fg)}
 .capture textarea::placeholder{color:var(--faint)}
-.mic{width:52px;height:52px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:inline-flex;align-items:center;justify-content:center;flex:none;position:relative;transition:transform .15s}
-.mic svg{width:24px;height:24px}
-.mic:active{transform:scale(.94)}
-.mic.listening{background:var(--bad);color:#fff}
-.mic.listening::after{content:"";position:absolute;inset:-6px;border-radius:50%;border:2px solid var(--bad);animation:pulse 1.2s ease-out infinite}
-@keyframes pulse{0%{transform:scale(.85);opacity:.9}100%{transform:scale(1.25);opacity:0}}
 .capture-foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .capture-foot .hint{font-size:12.5px;color:var(--muted);min-width:0}
 .capture-foot .hint.alert{color:var(--warn);font-weight:600}
@@ -156,7 +150,7 @@ ol.steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;f
 .sheet .in{padding-left:max(16px,var(--sal));padding-right:max(16px,var(--sar));padding-block:12px calc(20px + var(--sab));display:flex;flex-direction:column;gap:14px}
 .sheet .grab{width:40px;height:4px;border-radius:2px;background:var(--line);margin:0 auto}
 .sheet h3{font-size:18px;font-weight:700}
-@media (prefers-reduced-motion:reduce){.sheet,.backdrop,.mic{transition:none}.mic.listening::after{animation:none}}
+@media (prefers-reduced-motion:reduce){.sheet,.backdrop{transition:none}}
 
 /* Welcome */
 .welcome{position:fixed;inset:0;z-index:40;background:var(--bg);display:flex;flex-direction:column;justify-content:center;padding-left:max(24px,var(--sal));padding-right:max(24px,var(--sar));padding-block:calc(24px + var(--sat)) calc(24px + var(--sab));gap:18px;overflow:auto}
@@ -202,14 +196,14 @@ ol.steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;f
 .plan-total .v{font-family:var(--font-num);font-size:30px;font-weight:600}
 
 /* Nav */
-nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:15;background:var(--surface);border-top:1px solid var(--line);padding-bottom:var(--sab);padding-left:var(--sal);padding-right:var(--sar)}
+nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:15;background:var(--surface);border-top:1px solid var(--line);padding-bottom:max(0px,calc(var(--sab) - 14px));padding-left:var(--sal);padding-right:var(--sar)}
 nav.tabs .in{display:flex;max-width:720px;margin:0 auto}
-nav.tabs button{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 4px 7px;font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.02em}
+nav.tabs button{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 4px 6px;font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.02em}
 nav.tabs button svg{width:22px;height:22px}
 nav.tabs button.on{color:var(--accent)}
 
 /* Toast */
-.toast{position:fixed;left:50%;bottom:calc(74px + var(--sab));transform:translate(-50%,20px);z-index:30;background:var(--fg);color:var(--bg);padding:10px 12px 10px 16px;border-radius:14px;display:flex;align-items:center;gap:12px;font-size:14px;max-width:calc(100% - 32px);box-shadow:var(--shadow);opacity:0;transition:opacity .2s,transform .2s;pointer-events:none}
+.toast{position:fixed;left:50%;bottom:calc(66px + max(0px,calc(var(--sab) - 14px)));transform:translate(-50%,20px);z-index:30;background:var(--fg);color:var(--bg);padding:10px 12px 10px 16px;border-radius:14px;display:flex;align-items:center;gap:12px;font-size:14px;max-width:calc(100% - 32px);box-shadow:var(--shadow);opacity:0;transition:opacity .2s,transform .2s;pointer-events:none}
 .toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
 .toast .msg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .toast button{color:var(--bg);font-weight:700;padding:6px 8px;border-radius:8px;background:rgba(255,255,255,.14)}
@@ -246,10 +240,9 @@ nav.tabs button.on{color:var(--accent)}
     <div class="capture">
       <div class="capture-row">
         <textarea id="note" rows="1" placeholder="45 groceries at Spinneys" enterkeyhint="send" autocomplete="off" autocapitalize="sentences"></textarea>
-        <button class="mic" id="micBtn" aria-label="Speak the expense"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/></svg></button>
       </div>
       <div class="capture-foot">
-        <span class="hint" id="hint">Say or type the amount and what it was for. The rest is filled in.</span>
+        <span class="hint" id="hint">Type the amount and what it was for, or say "Hey Siri, add to my expenses".</span>
         <button class="primary" id="addBtn">Add</button>
       </div>
     </div>
@@ -629,22 +622,6 @@ async function submitNote(source){
   }catch(err){ toast(errMsg(err)); }
   btn.disabled=false; btn.textContent='Add'; busy=false;
 }
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec=null, listening=false;
-const HINT='Say or type the amount and what it was for. The rest is filled in.';
-function setListening(on){ listening=on; $('micBtn').classList.toggle('listening',on); const h=$('hint'); if(on){ h.textContent='Listening… tap the mic again when done.'; h.classList.add('alert'); } else { h.classList.remove('alert'); h.textContent=HINT; } }
-function dictationFallback(){ note.focus(); const h=$('hint'); h.textContent='Use the mic key on your keyboard, speak, then tap Add. Or say "Hey Siri, add to my expenses".'; h.classList.add('alert'); setTimeout(()=>{ if(!listening){ h.classList.remove('alert'); h.textContent=HINT; } },7000); }
-$('micBtn').onclick=()=>{
-  if(listening){ try{ rec.stop(); }catch(e){} return; }
-  if(!SR || ls('srFailed')) return dictationFallback();
-  let started=false; rec=new SR(); rec.lang='en-US'; rec.interimResults=true; rec.continuous=false; rec.maxAlternatives=1;
-  const wd=setTimeout(()=>{ if(!started){ try{ rec.abort(); }catch(e){} lsSet('srFailed','1'); setListening(false); dictationFallback(); } },3000);
-  rec.onstart=()=>{ started=true; clearTimeout(wd); setListening(true); };
-  rec.onresult=ev=>{ let t=''; for(let i=0;i<ev.results.length;i++) t+=ev.results[i][0].transcript; note.value=t; autosize(); };
-  rec.onerror=ev=>{ clearTimeout(wd); setListening(false); if(['not-allowed','service-not-allowed','audio-capture'].includes(ev.error)){ lsSet('srFailed','1'); dictationFallback(); } else if(ev.error!=='aborted' && ev.error!=='no-speech'){ dictationFallback(); } };
-  rec.onend=()=>{ const had=started; setListening(false); if(had && note.value.trim()) submitNote('voice'); };
-  try{ rec.start(); }catch(e){ clearTimeout(wd); lsSet('srFailed','1'); dictationFallback(); }
-};
 
 // ---------- AI analysis ----------
 $('aiBtn').onclick=async()=>{
