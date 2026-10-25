@@ -1,0 +1,13 @@
+{
+  "name": "household-ledger",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared expense ledger for two phones: voice entry via Siri, Claude parsing, fixed-cost planning, dashboard and AI analysis.",
+  "dependencies": {
+    "@netlify/blobs": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
