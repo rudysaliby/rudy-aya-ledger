@@ -131,6 +131,14 @@ li.sel{background:var(--accent-soft)}
 .delbtn{background:var(--bad);color:#fff;border-radius:999px;padding:9px 16px;font-weight:800;font-size:14px}
 .delbtn[disabled]{opacity:.45}
 .plan-total.income{background:linear-gradient(135deg,color-mix(in srgb,var(--surface) 70%,var(--good) 30%),var(--surface))}
+.nw{position:relative;overflow:hidden;border-radius:24px;padding:20px;background:linear-gradient(140deg,#13263a 0%,#1a3b4a 55%,#215c4a 100%);color:#fff;box-shadow:0 18px 50px rgba(20,60,60,.35)}
+@media (prefers-color-scheme: light){ .nw{background:linear-gradient(140deg,#17384f 0%,#1f5a63 55%,#1e7a5a 100%)} }
+.nw .label{font-size:12px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;opacity:.8}
+.nw .big{font-family:var(--font-display);font-size:42px;font-weight:800;line-height:1;letter-spacing:-.03em;margin-top:6px;font-variant-numeric:tabular-nums}
+.nw .sub{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.nw .sub span{background:rgba(255,255,255,.14);border-radius:999px;padding:5px 11px;font-size:12.5px;font-weight:600;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.nw .sub b{font-family:var(--font-num);font-weight:700}
+.list .amt.pos{color:var(--good)} .list .amt.neg{color:var(--bad)}
 
 /* Chips */
 .chips{display:flex;flex-wrap:wrap;gap:8px}
@@ -223,8 +231,8 @@ ol.steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;f
 
 /* Nav: floating pill */
 nav.tabs{flex:none;z-index:15;padding:6px max(14px,var(--sal)) var(--bottom-gap) max(14px,var(--sar))}
-nav.tabs .in{display:flex;max-width:520px;margin:0 auto 8px;background:color-mix(in srgb,var(--surface) 88%,transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid var(--line);border-radius:999px;box-shadow:var(--shadow);height:var(--tab-h);padding:5px}
-nav.tabs button{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border-radius:999px;font-size:10.5px;font-weight:700;color:var(--muted);letter-spacing:.03em;text-transform:uppercase}
+nav.tabs .in{display:flex;max-width:560px;margin:0 auto 8px;background:color-mix(in srgb,var(--surface) 88%,transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid var(--line);border-radius:999px;box-shadow:var(--shadow);height:var(--tab-h);padding:5px}
+nav.tabs button{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border-radius:999px;font-size:9.5px;font-weight:700;color:var(--muted);letter-spacing:.02em;text-transform:uppercase}
 nav.tabs button svg{width:21px;height:21px}
 nav.tabs button.on{color:#fff;background:linear-gradient(135deg,var(--a1),var(--a2));box-shadow:0 6px 18px rgba(255,92,138,.3)}
 
@@ -294,6 +302,17 @@ nav.tabs button.on{color:#fff;background:linear-gradient(135deg,var(--a1),var(--
     <div id="planGroups" style="display:flex;flex-direction:column;gap:14px"></div>
   </section>
 
+  <section class="screen hide" id="s-wealth">
+    <div class="nw" id="nwHero"><div class="label">Net worth today</div><div class="big" id="nwTotal">$0</div><div class="sub" id="nwSub"></div></div>
+    <div class="tiles" id="nwTiles"></div>
+    <div class="card"><h2 style="margin-bottom:10px">By person</h2><div class="split" id="nwSplit"></div><div class="legend" id="nwLegend" style="margin-top:8px"></div></div>
+    <div class="card hide" id="nwChartCard"><div class="row-between" style="margin-bottom:6px"><h2>Over time</h2><span class="muted" style="font-size:12px" id="nwChartSub"></span></div><div class="chart" id="nwChart"></div><div class="legend" id="nwChartLegend" style="margin-top:8px"></div></div>
+    <div class="row-between"><h2>Assets</h2><button class="link" id="addAccBtn">+ Add</button></div>
+    <ul class="list" id="assetList"></ul>
+    <div class="row-between"><h2>Debts</h2><button class="link" id="addDebtBtn">+ Add debt</button></div>
+    <ul class="list" id="debtList"></ul>
+  </section>
+
   <section class="screen hide" id="s-insights">
     <div class="range">
       <div class="title"><div class="label" id="rangeLabel">October 2026</div><button class="link" id="rangeReset">This month</button></div>
@@ -318,6 +337,7 @@ nav.tabs button.on{color:#fff;background:linear-gradient(135deg,var(--a1),var(--
   <button class="on" data-tab="add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>Add</button>
   <button data-tab="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>History</button>
   <button data-tab="plan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>Plan</button>
+  <button data-tab="wealth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l9-6 9 6M5 10v9M19 10v9M9 19v-6h6v6M3 19h18"/></svg>Wealth</button>
   <button data-tab="insights"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg>Insights</button>
 </div></nav>
 
@@ -332,14 +352,16 @@ const TAGS = ['Groceries','Dining','Coffee','Transport','Fuel','Kids','School','
 const TAG_ICON = {Groceries:'🛒',Dining:'🍽️',Coffee:'☕',Transport:'🚕',Fuel:'⛽',Kids:'🧸',School:'🎒',Health:'🩺',Pharmacy:'💊',Home:'🏠',Utilities:'💡',Shopping:'🛍️',Clothes:'👕',Beauty:'💅',Entertainment:'🎬',Travel:'✈️',Gifts:'🎁',Pets:'🐾',Fees:'🏦',Other:'•'};
 const KINDS = [['subscription','Subscriptions'],['salary','Staff salaries'],['housing','Housing'],['utility','Utilities'],['insurance','Insurance'],['other','Other']];
 const CURRENCIES = ['USD','LBP','EUR'];
-const DEFAULT_SETTINGS = { members:['Rudy','Aya'], base:'USD', rates:{USD:1, LBP:89500, EUR:0.92}, budget:null, timezone:'Asia/Beirut' };
+const DEFAULT_SETTINGS = { members:['Rudy','Aya'], people:['Noah'], base:'USD', rates:{USD:1, LBP:89500, EUR:0.92}, budget:null, timezone:'Asia/Beirut', goldPrice:null };
+const ACC_TYPES=[['cash','Cash','💵'],['bank','Bank account','🏦'],['savings','Savings','🐷'],['investment','Investments','📈'],['gold','Gold','🪙'],['loan','Loan','📄'],['card','Credit card','💳']];
+const LIAB=['loan','card'];
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const PCOL = ['var(--p1)','var(--p2)','var(--p3)','var(--p4)'];
 
 const S = {
   key: ls('key')||'', who: ls('who')||null,
   settings:{...DEFAULT_SETTINGS, rates:{...DEFAULT_SETTINGS.rates}},
-  months:{}, monthKeys:[], recurring:[], income:[], loaded:false, loading:false, selectMode:false, selected:new Set(),
+  months:{}, monthKeys:[], recurring:[], income:[], accounts:[], networth:[], loaded:false, loading:false, selectMode:false, selected:new Set(),
   tab:'add', hMonth: monthKey(new Date()), range:[monthKey(new Date())],
   hFilter:{by:null, tag:null}, monthLoading:{}, toastTimer:null, aiCtl:null, aiDone:false, pollTimer:null,
 };
@@ -361,7 +383,7 @@ function dayLabel(dk){ const [y,m,d]=dk.split('-').map(Number); const dt=new Dat
 function rate(c){ const r=S.settings.rates||{}; return Number(r[c])>0 ? Number(r[c]) : 1; }
 function fromUSD(usd,cur){ return usd*rate(cur||S.settings.base); }
 function sym(c){ return c==='USD'?'$':c==='LBP'?'L.L. ':c==='EUR'?'€':c+' '; }
-function fmtAmt(amount,cur){ cur=cur||S.settings.base; const dec=(cur==='LBP')?0:(Math.abs(amount)%1<0.005?0:2); return sym(cur)+Number(amount||0).toLocaleString(undefined,{minimumFractionDigits:dec,maximumFractionDigits:dec}); }
+function fmtAmt(amount,cur){ cur=cur||S.settings.base; const dec=(cur==='LBP')?0:(Math.abs(amount)%1<0.005?0:2); const n=Number(amount||0); return (n<0?'−':'')+sym(cur)+Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:dec,maximumFractionDigits:dec}); }
 function fmtBase(usd){ return fmtAmt(fromUSD(usd,S.settings.base), S.settings.base); }
 function fmtShort(usd){ const v=fromUSD(usd,S.settings.base); const c=S.settings.base; if(c==='LBP'){ if(v>=1e6) return 'L.L. '+(v/1e6).toFixed(1).replace(/\.0$/,'')+'M'; if(v>=1e3) return 'L.L. '+Math.round(v/1e3)+'k'; return 'L.L. '+Math.round(v); } if(v>=1e3) return sym(c)+(v/1e3).toFixed(v>=1e4?0:1).replace(/\.0$/,'')+'k'; return sym(c)+Math.round(v); }
 function memberIdx(name){ return (S.settings.members||[]).findIndex(m=>m.toLowerCase()===String(name||'').toLowerCase()); }
@@ -369,6 +391,10 @@ function memberColor(name){ const i=memberIdx(name); return i>=0 ? PCOL[i%PCOL.l
 function initial(name){ return String(name||'?').trim().charAt(0).toUpperCase()||'?'; }
 function recMonthlyUSD(r){ const u=Number(r.amount||0)/rate(r.currency||'USD'); return r.period==='yearly'? u/12 : u; }
 function incomeUSD(){ return S.income.filter(i=>i.active!==false).reduce((a,i)=>a+recMonthlyUSD(i),0); }
+function accountUSD(a){ if(a.type==='gold'){ const g=Number(a.grams)||0, pr=Number(S.settings.goldPrice)||0; if(g>0&&pr>0) return g*pr; } return Number(a.amount||0)/rate(a.currency||'USD'); }
+function owners(){ return [...(S.settings.members||[]), ...(S.settings.people||[]), 'Joint']; }
+function ownerColor(o){ const i=owners().indexOf(o); return i>=0? PCOL[i%PCOL.length] : 'var(--faint)'; }
+function accType(t){ return ACC_TYPES.find(x=>x[0]===t)||ACC_TYPES[1]; }
 function isStandalone(){ return window.navigator.standalone===true || window.matchMedia('(display-mode: standalone)').matches; }
 function niceCeil(v){ if(v<=0) return 1; const p=Math.pow(10,Math.floor(Math.log10(v))); const m=v/p; const n = m<=1?1:m<=2?2:m<=2.5?2.5:m<=5?5:10; return n*p; }
 
@@ -383,7 +409,7 @@ async function api(path, {method='GET', body}={}){
 }
 async function load(){
   if(!S.key || S.loading) return; S.loading=true;
-  try{ const d=await api('state'); S.settings={...DEFAULT_SETTINGS,...d.settings, rates:{...DEFAULT_SETTINGS.rates,...(d.settings.rates||{})}}; S.recurring=d.recurring||[]; S.income=d.income||[]; Object.assign(S.months, d.months||{}); S.monthKeys=d.monthKeys||[]; S.loaded=true; render(); }
+  try{ const d=await api('state'); S.settings={...DEFAULT_SETTINGS,...d.settings, rates:{...DEFAULT_SETTINGS.rates,...(d.settings.rates||{})}}; S.recurring=d.recurring||[]; S.income=d.income||[]; S.accounts=d.accounts||[]; S.networth=d.networth||[]; Object.assign(S.months, d.months||{}); S.monthKeys=d.monthKeys||[]; S.loaded=true; render(); }
   catch(e){ if(e.code==='auth'){ signOut('That key no longer works.'); } else if(!S.loaded){ $('recentList').innerHTML='<li class="empty">'+esc(e.message||'Could not reach the ledger.')+'<br><button class="link" id="retryBtn">Try again</button></li>'; const b=$('retryBtn'); if(b) b.onclick=load; } }
   S.loading=false;
 }
@@ -412,7 +438,7 @@ $('wGo').onclick=async()=>{
 $('w-key').addEventListener('keydown',e=>{ if(e.key==='Enter') $('wGo').click(); });
 
 // ---------- rendering ----------
-function render(){ renderHeader(); if(S.tab==='add') renderAdd(); if(S.tab==='history') renderHistory(); if(S.tab==='plan') renderPlan(); if(S.tab==='insights') renderInsights(); }
+function render(){ renderHeader(); if(S.tab==='add') renderAdd(); if(S.tab==='history') renderHistory(); if(S.tab==='plan') renderPlan(); if(S.tab==='wealth') renderWealth(); if(S.tab==='insights') renderInsights(); }
 function renderHeader(){ const b=$('whoBtn'); b.textContent=initial(S.who||'?'); b.style.background=S.who? memberColor(S.who):'var(--faint)'; const ms=S.settings.members||[]; $('brandName').textContent = ms.length? ms.join(' & ') : 'Ledger'; }
 function monthStats(mk){
   const ex=monthItems(mk); const byTag={}, byPerson={}, byDay={}; let total=0;
@@ -434,7 +460,7 @@ function renderAdd(){
   const list=$('recentList'); if(!S.loaded){ if(S.key) list.innerHTML='<li class="empty">Loading…</li>'; return; }
   const recent=allRecent().slice(0,8);
   if(!recent.length){ list.innerHTML='<li class="empty"><b>Nothing logged yet.</b><br>Say "Hey Siri, add to my expenses", or type something like "45 groceries at Spinneys" above.</li>'; return; }
-  list.innerHTML = recent.map(rowHTML).join('');
+  list.innerHTML = recent.map(e=>rowHTML(e)).join('');
 }
 function rowHTML(e, selectable){
   const showDate = e.date!==todayKey();
@@ -484,6 +510,41 @@ function renderPlan(){
       return `<li class="tap" data-rec="${esc(r.id)}" style="${off?'opacity:.5':''}"><div class="main"><div class="desc">${esc(r.name)}</div><div class="meta"><span class="pill ${r.period==='yearly'?'yr':''}">${r.period==='yearly'?'Yearly':'Monthly'}</span> ${r.period==='yearly'?'≈ '+esc(fmtBase(m))+'/mo':''}${r.day?' · day '+esc(r.day):''}${r.by?' · '+esc(r.by):''}${off?' · paused':''}</div></div><div class="amt">${esc(fmtAmt(r.amount,r.currency))}<small>${r.period==='yearly'?'per year':'per month'}</small></div></li>`; }).join('')+'</ul></div>'; }
   g.innerHTML=html;
 }
+
+// ---------- wealth ----------
+function renderWealth(){
+  const acc=S.accounts.filter(a=>a.active!==false); const assets=acc.filter(a=>!LIAB.includes(a.type)), debts=acc.filter(a=>LIAB.includes(a.type));
+  const sumA=assets.reduce((t,a)=>t+accountUSD(a),0), sumD=debts.reduce((t,a)=>t+accountUSD(a),0), net=sumA-sumD;
+  const liquid=assets.filter(a=>['cash','bank','savings'].includes(a.type)).reduce((t,a)=>t+accountUSD(a),0);
+  const gold=assets.filter(a=>a.type==='gold'); const grams=gold.reduce((t,a)=>t+(Number(a.grams)||0),0); const goldUSD=gold.reduce((t,a)=>t+accountUSD(a),0);
+  $('nwTotal').textContent=fmtBase(Math.round(net)); $('nwTotal').style.color = net<0? '#ffb4b4' : '#fff';
+  $('nwSub').innerHTML = `<span>Assets <b>${fmtShort(sumA)}</b></span><span>Debts <b>${fmtShort(sumD)}</b></span>${grams? `<span>Gold <b>${grams.toLocaleString()} g</b>${goldUSD? ' · '+fmtShort(goldUSD):''}</span>`:''}`;
+  const cm=monthKey(new Date()); const st=monthStats(cm); const spend = (st.elapsed? st.total/st.elapsed*st.dim : st.total) + st.fixed; const runway = spend>0? liquid/spend : null;
+  const pts=S.networth||[]; const prev = pts.length>=2 ? pts.find(p=>p.date<=shiftMonthDate(30)) || pts[0] : null; const prevNet = prev? prev.assets-prev.debts : null;
+  $('nwTiles').innerHTML = `
+    <div class="tile"><span class="k">Liquid savings</span><span class="v">${esc(fmtBase(Math.round(liquid)))}</span><span class="d">cash, bank &amp; savings</span></div>
+    <div class="tile"><span class="k">Runway</span><span class="v">${runway==null? '—' : runway>=24? '2y+' : runway.toFixed(1)+' mo'}</span><span class="d">${spend>0? 'at '+esc(fmtShort(spend))+' a month all-in' : 'log spending first'}</span></div>
+    <div class="tile"><span class="k">Debt ratio</span><span class="v">${sumA>0? Math.round(sumD/sumA*100)+'%' : '—'}</span><span class="d">debts vs assets</span></div>
+    <div class="tile"><span class="k">30-day change</span><span class="v" style="color:${prevNet==null?'inherit':net-prevNet>=0?'var(--good)':'var(--bad)'}">${prevNet==null? '—' : (net-prevNet>=0?'+':'−')+esc(fmtShort(Math.abs(net-prevNet)))}</span><span class="d">${prevNet==null? 'needs a month of history' : 'in net worth'}</span></div>`;
+  // by person (net per owner)
+  const byO={}; for(const a of acc){ const o=a.owner||'Joint'; byO[o]=(byO[o]||0)+(LIAB.includes(a.type)? -accountUSD(a) : accountUSD(a)); }
+  const names=owners().filter(o=>byO[o]!=null).concat(Object.keys(byO).filter(o=>!owners().includes(o))); const tot=names.reduce((t,o)=>t+Math.max(0,byO[o]),0)||1;
+  $('nwSplit').innerHTML = names.map(o=>`<i style="width:${Math.max(0,byO[o])/tot*100}%;background:${ownerColor(o)}"></i>`).join('');
+  $('nwLegend').innerHTML = names.length? names.map(o=>`<span><i class="dot" style="background:${ownerColor(o)};margin-right:5px"></i>${esc(o)} <b class="num">${esc(fmtBase(Math.round(byO[o])))}</b></span>`).join('') : '<span class="faint">Add accounts to see who holds what.</span>';
+  // chart
+  const card=$('nwChartCard'); if(pts.length>=2){ card.classList.remove('hide'); const box=$('nwChart'); const f=chartFrame(box,170,44,14,16,24); const labels=pts.map(p=>p.date.slice(5).replace('-','/'));
+    lineChart(box, f, [{name:'Net worth',color:'var(--p3)',values:pts.map(p=>p.assets-p.debts)},{name:'Debts',color:'var(--p2)',values:pts.map(p=>p.debts),dashed:true}], labels, {aria:'Net worth over time', maxXLabels:5, tipTitle:i=>pts[i].date});
+    $('nwChartSub').textContent = pts.length+' updates'; $('nwChartLegend').innerHTML='<span><i class="sw" style="background:var(--p3)"></i>Net worth</span><span><i class="sw" style="background:var(--p2)"></i>Debts (dashed)</span>'; }
+  else card.classList.add('hide');
+  // lists
+  const row=a=>{ const t=accType(a.type); const v=accountUSD(a); const liab=LIAB.includes(a.type); const goldMeta = a.type==='gold'? `${(Number(a.grams)||0).toLocaleString()} g${Number(S.settings.goldPrice)? '' : ' · set the gold price in Settings'}` : ''; const orig=(a.type!=='gold' && a.currency!==S.settings.base)? `<small>${esc(fmtAmt(a.amount,a.currency))}</small>`:'';
+    return `<li class="tap" data-acc="${esc(a.id)}"><span class="tagdot" aria-hidden="true">${t[2]}</span><div class="main"><div class="desc">${esc(a.name)}</div><div class="meta"><i class="dot" style="background:${ownerColor(a.owner||'Joint')};margin-right:4px"></i>${esc(a.owner||'Joint')} · ${esc(t[1])}${goldMeta?' · '+esc(goldMeta):''}${a.note?' · '+esc(a.note):''}</div></div><div class="amt ${liab?'neg':'pos'}">${liab?'−':''}${esc(fmtBase(Math.round(v)))}${orig}</div></li>`; };
+  const al=$('assetList'), dl=$('debtList');
+  if(!S.loaded){ al.innerHTML='<li class="empty">Loading…</li>'; dl.innerHTML=''; return; }
+  al.innerHTML = assets.length? [...assets].sort((a,b)=>accountUSD(b)-accountUSD(a)).map(row).join('') : '<li class="empty"><b>No accounts yet.</b><br>Add bank balances, savings, investments and gold for Rudy, Aya, Noah or jointly.</li>';
+  dl.innerHTML = debts.length? [...debts].sort((a,b)=>accountUSD(b)-accountUSD(a)).map(row).join('') : '<li class="empty">No debts recorded. Loans and credit-card balances go here.</li>';
+}
+function shiftMonthDate(days){ const d=new Date(); d.setDate(d.getDate()-days); return dateKey(d); }
 
 // ---------- insights: range ----------
 function dataMonths(){ const cm=monthKey(new Date()); const set=new Set(S.monthKeys.filter(m=>m<=cm)); set.add(cm); return [...set].sort(); }
@@ -557,7 +618,7 @@ function renderInsights(){
   $('splitLegend').innerHTML = names.map(n=>`<span><i class="dot" style="background:${memberColor(n)};margin-right:5px"></i>${esc(n)} <b class="num">${esc(fmtBase(agg.byPerson[n]||0))}</b> ${agg.total?Math.round((agg.byPerson[n]||0)/agg.total*100)+'%':''}</span>`).join('') || '<span class="faint">No spending in this period.</span>';
   // biggest
   const big=[...agg.items].sort((a,b)=>b.usd-a.usd).slice(0,5);
-  $('bigList').innerHTML = big.length? big.map(rowHTML).join('') : '<li class="empty" style="padding:12px">Nothing yet.</li>';
+  $('bigList').innerHTML = big.length? big.map(e=>rowHTML(e)).join('') : '<li class="empty" style="padding:12px">Nothing yet.</li>';
   $('aiBtn').textContent = S.aiDone? 'Analyze again' : 'Analyze'; $('aiBtn').classList.toggle('hide', !!S.aiCtl); $('aiStop').classList.toggle('hide', !S.aiCtl);
 }
 
@@ -718,6 +779,31 @@ function openIncomeSheet(r){
       $('i-save').disabled=true; try{ const d=await api('income',{method:'POST',body:{item}}); S.income=d.income||S.income; closeSheet(); toast('Saved '+name); render(); }catch(err){ toast(errMsg(err)); $('i-save').disabled=false; } };
   });
 }
+function openAccountSheet(a, debtDefault){
+  const isNew=!a; a=a||{name:'',type:debtDefault?'loan':'bank',owner:S.who||'Joint',amount:'',currency:S.settings.base,grams:'',note:'',active:true};
+  const types = ACC_TYPES.map(t=>t[1]); const cur=accType(a.type)[1];
+  openSheet(`<div class="grab"></div><h3>${isNew? (debtDefault?'New debt':'New account') : 'Edit'}</h3><div class="form">
+    <div class="field"><label for="a-name">Name</label><input id="a-name" value="${esc(a.name)}" placeholder="BLOM savings, Gold coins, Car loan…"></div>
+    <div class="field"><label>Type</label><div class="chips" id="a-types">${ACC_TYPES.map(t=>`<button type="button" class="chip ${t[1]===cur?'on':''}" data-chip="type" data-val="${esc(t[1])}">${t[2]} ${esc(t[1])}</button>`).join('')}</div></div>
+    <div class="field"><label>Whose</label><div class="chips">${owners().map(o=>`<button type="button" class="chip ${o===(a.owner||'Joint')?'on':''}" data-chip="owner" data-val="${esc(o)}"><i class="dot" style="background:${ownerColor(o)}"></i>${esc(o)}</button>`).join('')}</div></div>
+    <div class="grid2" id="a-money"><div class="field"><label for="a-amount" id="a-amount-l">Balance</label><input class="num" id="a-amount" type="number" inputmode="decimal" step="any" value="${esc(a.amount)}" placeholder="0"></div>
+    <div class="field"><label for="a-cur">Currency</label><select id="a-cur">${CURRENCIES.map(c=>`<option ${c===a.currency?'selected':''}>${c}</option>`).join('')}</select></div></div>
+    <div class="field hide" id="a-goldf"><label for="a-grams">Weight in grams</label><input class="num" id="a-grams" type="number" inputmode="decimal" step="any" value="${esc(a.grams||'')}" placeholder="0"><span class="help" id="a-goldhelp"></span></div>
+    <div class="field"><label for="a-note">Note</label><input id="a-note" value="${esc(a.note||'')}" placeholder="Optional"></div>
+    <div class="actions"><div>${isNew?'':'<button type="button" class="danger" id="a-del">Delete</button>'}</div><div class="right"><button type="button" class="secondary" id="a-cancel">Cancel</button><button type="button" class="primary" id="a-save">${isNew?'Add':'Save'}</button></div></div>
+  </div>`, root=>{
+    wireChips(root);
+    const sync=()=>{ const t=(ACC_TYPES.find(x=>x[1]===chipVal(root,'type'))||ACC_TYPES[1])[0]; const gold=t==='gold'; $('a-goldf').classList.toggle('hide',!gold); $('a-money').classList.toggle('hide',gold && Number(S.settings.goldPrice)>0); $('a-amount-l').textContent = LIAB.includes(t)? 'Amount owed' : (gold? 'Value (if no gold price set)' : 'Balance'); const pr=Number(S.settings.goldPrice)||0; $('a-goldhelp').textContent = pr? `Valued at ${fmtAmt(pr,'USD')} per gram (change it in Settings).` : 'Set a gold price per gram in Settings to value it automatically, or enter the value below.'; };
+    root.querySelectorAll('[data-chip="type"]').forEach(b=>b.addEventListener('click',sync)); sync();
+    if(isNew) setTimeout(()=>$('a-name').focus(),300);
+    $('a-cancel').onclick=closeSheet;
+    if(!isNew) $('a-del').onclick=async()=>{ if($('a-del').dataset.arm){ try{ const d=await api('account',{method:'DELETE',body:{id:a.id}}); S.accounts=d.accounts||[]; S.networth=d.networth||S.networth; closeSheet(); toast('Deleted'); render(); }catch(err){ toast(errMsg(err)); } } else { $('a-del').dataset.arm='1'; $('a-del').textContent='Tap again to delete'; } };
+    $('a-save').onclick=async()=>{ const name=$('a-name').value.trim(); if(!name){ $('a-name').focus(); return; } const t=(ACC_TYPES.find(x=>x[1]===chipVal(root,'type'))||ACC_TYPES[1])[0];
+      const item={ id:a.id, name, type:t, owner:chipVal(root,'owner')||'Joint', amount:Number($('a-amount').value)||0, currency:$('a-cur').value, grams: t==='gold'? Number($('a-grams').value)||0 : null, note:$('a-note').value.trim()||null, active:true, ts:a.ts };
+      if(t!=='gold' && !(item.amount>=0)){ $('a-amount').focus(); return; }
+      $('a-save').disabled=true; try{ const d=await api('account',{method:'POST',body:{item}}); S.accounts=d.accounts||S.accounts; S.networth=d.networth||S.networth; closeSheet(); toast('Saved '+name); render(); }catch(err){ toast(errMsg(err)); $('a-save').disabled=false; } };
+  });
+}
 function siriURL(who){ return location.origin+'/siri?key='+encodeURIComponent(S.key)+'&by='+encodeURIComponent(who||S.who||'')+'&text='; }
 function openSettingsSheet(){
   const s=S.settings;
@@ -728,6 +814,8 @@ function openSettingsSheet(){
     <div class="field"><label for="s-lbp">1 USD = ? LBP</label><input class="num" id="s-lbp" type="number" inputmode="numeric" value="${esc(s.rates.LBP||89500)}"></div></div>
     <div class="grid2"><div class="field"><label for="s-eur">1 USD = ? EUR</label><input class="num" id="s-eur" type="number" inputmode="decimal" step="any" value="${esc(s.rates.EUR||0.92)}"></div>
     <div class="field"><label for="s-budget">Monthly budget (${esc(s.base)})</label><input class="num" id="s-budget" type="number" inputmode="decimal" value="${esc(s.budget||'')}" placeholder="Optional"></div></div>
+    <div class="grid2"><div class="field"><label for="s-people">Also track for</label><input id="s-people" value="${esc((s.people||[]).join(', '))}" placeholder="Noah"><span class="help">Family members with savings but no phone.</span></div>
+    <div class="field"><label for="s-gold">Gold price (USD per gram)</label><input class="num" id="s-gold" type="number" inputmode="decimal" step="any" value="${esc(s.goldPrice||'')}" placeholder="e.g. 130"></div></div>
     <div class="field"><label for="s-tz">Time zone</label><select id="s-tz">${['Asia/Beirut','Europe/Paris','Europe/London','Asia/Dubai','America/New_York'].map(z=>`<option ${z===(s.timezone||'Asia/Beirut')?'selected':''}>${z}</option>`).join('')}</select></div>
     <div class="field"><label>Siri shortcut for this phone</label>
       <div class="help">In the Shortcuts app, make a shortcut named <b>Add to my expenses</b> with these actions:</div>
@@ -744,7 +832,8 @@ function openSettingsSheet(){
     $('s-signout').onclick=()=>{ closeSheet(); signOut(); };
     $('s-save').onclick=async()=>{ const who=chipVal(root,'who'); if(who){ S.who=who; lsSet('who',who); }
       const members=$('s-members').value.split(',').map(x=>x.trim()).filter(Boolean);
-      const settings={ members: members.length?members:DEFAULT_SETTINGS.members, base:$('s-base').value, rates:{USD:1, LBP:Number($('s-lbp').value)||89500, EUR:Number($('s-eur').value)||0.92}, budget:Number($('s-budget').value)||null, timezone:$('s-tz').value };
+      const people=$('s-people').value.split(',').map(x=>x.trim()).filter(Boolean);
+      const settings={ members: members.length?members:DEFAULT_SETTINGS.members, people, base:$('s-base').value, rates:{USD:1, LBP:Number($('s-lbp').value)||89500, EUR:Number($('s-eur').value)||0.92}, budget:Number($('s-budget').value)||null, timezone:$('s-tz').value, goldPrice:Number($('s-gold').value)||null };
       $('s-save').disabled=true; try{ const d=await api('settings',{method:'PUT',body:{settings}}); S.settings={...DEFAULT_SETTINGS,...d.settings}; closeSheet(); render(); toast('Settings saved'); }catch(err){ toast(errMsg(err)); $('s-save').disabled=false; } };
   });
 }
@@ -795,14 +884,16 @@ $('aiStop').onclick=()=>{ if(S.aiCtl) S.aiCtl.abort(); };
 
 // ---------- navigation & events ----------
 document.querySelectorAll('nav.tabs button').forEach(b=>b.addEventListener('click',()=>setTab(b.dataset.tab)));
-function setTab(t){ S.tab=t; document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t)); ['add','history','plan','insights'].forEach(x=>$('s-'+x).classList.toggle('hide',x!==t)); $('scroller').scrollTo(0,0); render(); }
+function setTab(t){ S.tab=t; document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t)); ['add','history','plan','wealth','insights'].forEach(x=>$('s-'+x).classList.toggle('hide',x!==t)); $('scroller').scrollTo(0,0); render(); }
 function findItem(id, mk){ return monthItems(mk).find(x=>x.id===id); }
 document.addEventListener('click',e=>{
   const li=e.target.closest('li[data-id]');
   if(li){ if(S.selectMode && li.closest('#histList')){ const id=li.dataset.id; if(S.selected.has(id)) S.selected.delete(id); else S.selected.add(id); renderHistory(); return; } const ex=findItem(li.dataset.id, li.dataset.month); if(ex) openExpenseSheet(ex); }
   const lr=e.target.closest('li[data-rec]'); if(lr){ const r=S.recurring.find(x=>x.id===lr.dataset.rec); if(r) openRecurringSheet(r); }
   const lin=e.target.closest('li[data-inc]'); if(lin){ const r=S.income.find(x=>x.id===lin.dataset.inc); if(r) openIncomeSheet(r); }
+  const la=e.target.closest('li[data-acc]'); if(la){ const r=S.accounts.find(x=>x.id===la.dataset.acc); if(r) openAccountSheet(r); }
 });
+$('addAccBtn').onclick=()=>openAccountSheet(null,false); $('addDebtBtn').onclick=()=>openAccountSheet(null,true);
 $('hSelect').onclick=()=>{ S.selectMode=true; S.selected=new Set(); renderHistory(); };
 $('selCancel').onclick=()=>{ S.selectMode=false; S.selected=new Set(); renderHistory(); };
 $('selAll').onclick=()=>{ const vis=S.visibleIds||[]; const allOn = vis.length && vis.every(id=>S.selected.has(id)); S.selected = allOn? new Set() : new Set(vis); renderHistory(); };

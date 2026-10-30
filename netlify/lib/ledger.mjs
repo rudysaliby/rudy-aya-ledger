@@ -3,7 +3,9 @@ import { getStore } from "@netlify/blobs";
 
 export const TAGS = ['Groceries','Dining','Coffee','Transport','Fuel','Kids','School','Health','Pharmacy','Home','Utilities','Shopping','Clothes','Beauty','Entertainment','Travel','Gifts','Pets','Fees','Other'];
 export const CURRENCIES = ['USD','LBP','EUR'];
-export const DEFAULT_SETTINGS = { members:['Rudy','Aya'], base:'USD', rates:{USD:1, LBP:89500, EUR:0.92}, budget:null, timezone:'Asia/Beirut' };
+export const DEFAULT_SETTINGS = { members:['Rudy','Aya'], people:['Noah'], base:'USD', rates:{USD:1, LBP:89500, EUR:0.92}, budget:null, timezone:'Asia/Beirut', goldPrice:null };
+export const ACCOUNT_TYPES = ['cash','bank','savings','investment','gold','loan','card'];
+export const LIABILITY_TYPES = ['loan','card'];
 
 const TAG_WORDS = {
   Groceries:['grocer','spinneys','carrefour','supermarket','market','vegetable','fruit','bread','milk','chicken','meat','eggs','dekkeneh','minimarket','charcutier'],
@@ -49,6 +51,25 @@ export async function getMonth(mk){ const m = await readJSON('months/'+mk, null)
 export async function putMonth(mk, items){ await writeJSON('months/'+mk, {items}); }
 export async function getRecurring(){ const r = await readJSON('recurring', null); return (r && Array.isArray(r.items)) ? r.items : []; }
 export async function getIncome(){ const r = await readJSON('income', null); return (r && Array.isArray(r.items)) ? r.items : []; }
+export async function getAccounts(){ const r = await readJSON('accounts', null); return (r && Array.isArray(r.items)) ? r.items : []; }
+export async function getNetworthPoints(){ const r = await readJSON('networth', null); return (r && Array.isArray(r.points)) ? r.points : []; }
+/** USD value of one account; gold uses grams × settings.goldPrice (USD per gram) unless an amount is given directly. */
+export function accountUSD(settings, a){
+  if(a.type==='gold'){ const g=Number(a.grams)||0; const price=Number(settings.goldPrice)||0; if(g>0 && price>0) return g*price; }
+  return toUSD(settings, a.amount, a.currency);
+}
+export function netWorth(settings, accounts){
+  let assets=0, debts=0;
+  for(const a of accounts){ if(a.active===false) continue; const v=accountUSD(settings,a); if(LIABILITY_TYPES.includes(a.type)) debts+=v; else assets+=v; }
+  return {assets, debts, net: assets-debts};
+}
+/** Keep one net-worth point per day so the Wealth tab can draw a history line. */
+export async function recordSnapshot(settings, accounts, today){
+  const {assets,debts}=netWorth(settings, accounts);
+  const pts=(await getNetworthPoints()).filter(p=>p.date!==today); pts.push({date:today, assets:Math.round(assets), debts:Math.round(debts)});
+  pts.sort((a,b)=>a.date<b.date?-1:1); await writeJSON('networth', {points: pts.slice(-400)});
+  return pts;
+}
 export function incomeMonthlyUSD(settings, items){ return items.filter(i=>i.active!==false).reduce((a,i)=>{ const u=toUSD(settings,i.amount,i.currency); return a+(i.period==='yearly'?u/12:u); },0); }
 export async function putRecurring(items){ await writeJSON('recurring', {items}); }
 /** Month keys that hold at least one document, oldest first. */
@@ -172,7 +193,7 @@ export function monthStats(settings, items, recurring, mk, today){
   return {items,total,byTag,byPerson,byDay,fixed,dim,elapsed,count:items.length};
 }
 export const monthLabel=k=>{ const [y,m]=k.split('-').map(Number); return new Date(Date.UTC(y,m-1,1)).toLocaleString('en-US',{month:'long',year:'numeric',timeZone:'UTC'}); };
-export function analysisPrompt(settings, mk, st, m1, m2, recurring, today, incomeUSD=0){
+export function analysisPrompt(settings, mk, st, m1, m2, recurring, today, incomeUSD=0, wealth=null){
   const usd=v=>Math.round(v);
   const tagLine=s=>Object.entries(s.byTag).sort((a,b)=>b[1]-a[1]).map(([t,v])=>`${t} ${usd(v)}`).join(', ')||'none';
   const perLine=s=>Object.entries(s.byPerson).map(([p,v])=>`${p} ${usd(v)}`).join(', ')||'none';
@@ -191,14 +212,20 @@ Previous month (${label(shiftMonth(mk,-1))}, full): total ${usd(m1.total)}; by c
 Two months ago (${label(shiftMonth(mk,-2))}): total ${usd(m2.total)}; by category: ${tagLine(m2)}.
 Fixed monthly costs (${usd(st.fixed)}/mo in total): ${recs}.
 ${incomeLine}
+${wealthLine(wealth, st.total+st.fixed)}
 ${budget}`,
   };
+}
+function wealthLine(w, monthlySpend){
+  if(!w || (!w.assets && !w.debts)) return '';
+  const usd=v=>Math.round(v); const runway = monthlySpend>0 ? (w.liquid/monthlySpend).toFixed(1) : 'n/a';
+  return `Balances today: assets ${usd(w.assets)} (of which liquid cash and bank ${usd(w.liquid)}), debts ${usd(w.debts)}, net worth ${usd(w.net)}. Liquid savings cover about ${runway} months of total spending. Mention this in "Fixed costs" or "Try this" only when it changes the advice (for example an expensive debt worth paying down, or a thin cushion).`;
 }
 function coachSystem(settings){
   return `You are a careful, friendly household finance coach for a two-person household (${settings.members.join(' and ')}) living in Lebanon. Reply in plain text only (no markdown symbols such as # or **), at most 230 words, using exactly these short section titles on their own lines: Headline / Watch out / Try this / Fixed costs. In "Watch out" name the categories or items that look high or unusual with their numbers. In "Try this" give 3 concrete, specific changes, each with a rough monthly saving in dollars. In "Fixed costs" say in one or two sentences how large subscriptions and staff salaries are relative to everything and whether anything there deserves a second look. When household income is given, open the Headline with how much of it is left over (the savings rate) and whether that is healthy. Be specific to the numbers; no generic advice; no greetings. Amounts are in USD.`;
 }
 /** Prompt for a range of months (2 or more). perMonth: [{mk, st}] oldest first; prior: stats for the same number of months before the range. */
-export function rangeAnalysisPrompt(settings, perMonth, prior, recurring, incomeUSD=0){
+export function rangeAnalysisPrompt(settings, perMonth, prior, recurring, incomeUSD=0, wealth=null){
   const usd=v=>Math.round(v);
   const agg={byTag:{},byPerson:{},total:0,count:0,items:[]};
   for(const {st} of perMonth){ agg.total+=st.total; agg.count+=st.count; agg.items.push(...st.items); for(const [t,v] of Object.entries(st.byTag)) agg.byTag[t]=(agg.byTag[t]||0)+v; for(const [p,v] of Object.entries(st.byPerson)) agg.byPerson[p]=(agg.byPerson[p]||0)+v; }
@@ -218,6 +245,7 @@ Largest single items: ${big}.
 ${priorLine}
 Fixed monthly costs (${usd(fixed)}/mo in total, ${usd(fixed*n)} over the period): ${recs}.
 ${incomeUSD>0 ? `Household income: ${usd(incomeUSD)} per month, ${usd(incomeUSD*n)} over the period; left over after all spending: ${usd(incomeUSD*n-agg.total-fixed*n)} (${Math.round((incomeUSD*n-agg.total-fixed*n)/(incomeUSD*n)*100)}% of income).` : 'Income not recorded.'}
+${wealthLine(wealth, agg.total/n+fixed)}
 ${budget}`,
   };
 }

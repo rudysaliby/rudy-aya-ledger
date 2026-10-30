@@ -1,5 +1,5 @@
 // JSON API for the ledger app. All routes need the household key.
-import { HttpError, checkAuth, json, text, getSettings, getMonth, getRecurring, getIncome, incomeMonthlyUSD, writeJSON, mutateList, listMonthKeys,
+import { HttpError, checkAuth, json, text, getSettings, getMonth, getRecurring, getIncome, incomeMonthlyUSD, getAccounts, getNetworthPoints, accountUSD, netWorth, recordSnapshot, ACCOUNT_TYPES, LIABILITY_TYPES, writeJSON, mutateList, listMonthKeys,
   parseNote, saveExpenses, toUSD, todayIn, shiftMonth, monthStats, analysisPrompt, rangeAnalysisPrompt, claudeMessage, analysisModel, newId, TAGS, CURRENCIES, DEFAULT_SETTINGS } from "../lib/ledger.mjs";
 
 export const config = { path: "/api/*" };
@@ -18,9 +18,9 @@ export default async (req) => {
     if(route==='state' && req.method==='GET'){
       const months=(url.searchParams.get('months')||'').split(',').filter(m=>/^\d{4}-\d{2}$/.test(m));
       const keys = months.length? months : (()=>{ const cm=today.slice(0,7); const a=[]; for(let i=5;i>=0;i--) a.push(shiftMonth(cm,-i)); return a; })();
-      const [recurring, income, monthKeys, ...docs] = await Promise.all([getRecurring(), getIncome(), listMonthKeys(), ...keys.map(k=>getMonth(k))]);
+      const [recurring, income, accounts, networth, monthKeys, ...docs] = await Promise.all([getRecurring(), getIncome(), getAccounts(), getNetworthPoints(), listMonthKeys(), ...keys.map(k=>getMonth(k))]);
       const out={}; keys.forEach((k,i)=>out[k]=docs[i]);
-      return json({settings, recurring, income, months:out, monthKeys, today, serverTime:Date.now()});
+      return json({settings, recurring, income, accounts, networth, months:out, monthKeys, today, serverTime:Date.now()});
     }
     if(route==='month' && req.method==='GET'){
       const mk=url.searchParams.get('m'); if(!/^\d{4}-\d{2}$/.test(mk||'')) throw new HttpError(400,'Bad month');
@@ -69,6 +69,16 @@ export default async (req) => {
     }
     if(route==='income' && req.method==='DELETE'){ const items=await mutateList('income', items=>items.filter(x=>x.id!==body.id)); return json({income:items}); }
 
+    // ---- accounts (savings, bank, gold, debts) ----
+    if(route==='account' && req.method==='POST'){
+      const a=body.item||{}; const type=ACCOUNT_TYPES.includes(a.type)? a.type : 'bank';
+      const doc={ id:a.id||newId(), name:String(a.name||'').slice(0,60)||'Account', type, owner:String(a.owner||'').slice(0,40), amount:Math.abs(Number(a.amount))||0, currency:CURRENCIES.includes(a.currency)?a.currency:settings.base, grams: type==='gold'? (Math.abs(Number(a.grams))||0) : null, note:a.note?String(a.note).slice(0,120):null, active:a.active!==false, updatedAt:today, ts:a.ts||Date.now() };
+      const items=await mutateList('accounts', items=>{ const i=items.findIndex(x=>x.id===doc.id); if(i>=0) items[i]=doc; else items.push(doc); return items; });
+      const networth=await recordSnapshot(settings, items, today);
+      return json({saved:doc, accounts:items, networth});
+    }
+    if(route==='account' && req.method==='DELETE'){ const items=await mutateList('accounts', items=>items.filter(x=>x.id!==body.id)); const networth=await recordSnapshot(settings, items, today); return json({accounts:items, networth}); }
+
     // ---- recurring ----
     if(route==='recurring' && req.method==='POST'){
       const r=body.item||{};
@@ -81,29 +91,33 @@ export default async (req) => {
     // ---- settings ----
     if(route==='settings' && req.method==='PUT'){
       const s=body.settings||{}; const members=Array.isArray(s.members)? s.members.map(x=>String(x).trim().slice(0,30)).filter(Boolean) : settings.members;
-      const doc={ members: members.length?members:DEFAULT_SETTINGS.members, base: CURRENCIES.includes(s.base)?s.base:settings.base, rates:{USD:1, LBP:Number(s.rates?.LBP)||settings.rates.LBP, EUR:Number(s.rates?.EUR)||settings.rates.EUR}, budget:Number(s.budget)||null, timezone:String(s.timezone||settings.timezone||'Asia/Beirut') };
-      await writeJSON('settings', doc); return json({settings:doc});
+      const people=Array.isArray(s.people)? s.people.map(x=>String(x).trim().slice(0,30)).filter(Boolean) : (settings.people||[]);
+      const doc={ members: members.length?members:DEFAULT_SETTINGS.members, people, base: CURRENCIES.includes(s.base)?s.base:settings.base, rates:{USD:1, LBP:Number(s.rates?.LBP)||settings.rates.LBP, EUR:Number(s.rates?.EUR)||settings.rates.EUR}, budget:Number(s.budget)||null, timezone:String(s.timezone||settings.timezone||'Asia/Beirut'), goldPrice:Number(s.goldPrice)||null };
+      await writeJSON('settings', doc);
+      if(doc.goldPrice!==settings.goldPrice){ try{ await recordSnapshot(doc, await getAccounts(), today); }catch(e){} }
+      return json({settings:doc});
     }
 
     // ---- AI analysis (streams plain text) ----
     if(route==='analyze' && req.method==='POST'){
       const sel=(Array.isArray(body.months)? body.months : [body.month]).filter(m=>/^\d{4}-\d{2}$/.test(m||'')).sort().slice(-24);
       const months = sel.length? sel : [today.slice(0,7)];
-      const [recurring, income]=await Promise.all([getRecurring(), getIncome()]); const incomeUSD=incomeMonthlyUSD(settings, income);
+      const [recurring, income, accounts]=await Promise.all([getRecurring(), getIncome(), getAccounts()]); const incomeUSD=incomeMonthlyUSD(settings, income);
+      const nw=netWorth(settings, accounts); nw.liquid=accounts.filter(a=>a.active!==false && ['cash','bank','savings'].includes(a.type)).reduce((t,a)=>t+accountUSD(settings,a),0);
       let p;
       if(months.length===1){
         const mk=months[0];
         const [cur, m1, m2] = await Promise.all([getMonth(mk), getMonth(shiftMonth(mk,-1)), getMonth(shiftMonth(mk,-2))]);
         const st=monthStats(settings,cur,recurring,mk,today), s1=monthStats(settings,m1,recurring,shiftMonth(mk,-1),today), s2=monthStats(settings,m2,recurring,shiftMonth(mk,-2),today);
         if(!st.count && !recurring.length) return text('Nothing to analyze yet. Log a few expenses first.');
-        p=analysisPrompt(settings, mk, st, s1, s2, recurring, today, incomeUSD);
+        p=analysisPrompt(settings, mk, st, s1, s2, recurring, today, incomeUSD, nw);
       } else {
         const n=months.length; const priorKeys=[]; for(let i=n;i>=1;i--) priorKeys.push(shiftMonth(months[0],-i));
         const docs=await Promise.all([...months, ...priorKeys].map(k=>getMonth(k)));
         const perMonth=months.map((mk,i)=>({mk, st:monthStats(settings,docs[i],recurring,mk,today)}));
         const prior={total:0,byTag:{}}; priorKeys.forEach((mk,i)=>{ const st=monthStats(settings,docs[n+i],recurring,mk,today); prior.total+=st.total; for(const [t,v] of Object.entries(st.byTag)) prior.byTag[t]=(prior.byTag[t]||0)+v; });
         if(!perMonth.some(x=>x.st.count) && !recurring.length) return text('Nothing to analyze yet. Log a few expenses first.');
-        p=rangeAnalysisPrompt(settings, perMonth, prior, recurring, incomeUSD);
+        p=rangeAnalysisPrompt(settings, perMonth, prior, recurring, incomeUSD, nw);
       }
       const up = await claudeMessage({ model: analysisModel(), system:p.system, messages:[{role:'user',content:p.user}], max_tokens:700, stream:true });
       const dec=new TextDecoder(), enc=new TextEncoder(); let buf='';
