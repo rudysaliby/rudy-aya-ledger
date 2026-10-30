@@ -2,8 +2,8 @@
 import { getStore } from "@netlify/blobs";
 
 export const TAGS = ['Groceries','Dining','Coffee','Transport','Fuel','Kids','School','Health','Pharmacy','Home','Utilities','Shopping','Clothes','Beauty','Entertainment','Travel','Gifts','Pets','Fees','Other'];
-export const CURRENCIES = ['USD','LBP','EUR'];
-export const DEFAULT_SETTINGS = { members:['Rudy','Aya'], people:['Noah'], base:'USD', rates:{USD:1, LBP:89500, EUR:0.92}, budget:null, timezone:'Asia/Beirut', goldPrice:null };
+export const CURRENCIES = ['USD','LBP','EUR','AED'];
+export const DEFAULT_SETTINGS = { members:['Rudy','Aya'], people:['Noah'], base:'USD', rates:{USD:1, LBP:89500, EUR:0.92, AED:3.6725}, budget:null, timezone:'Asia/Beirut', goldPrice:null };
 export const ACCOUNT_TYPES = ['cash','bank','savings','investment','gold','loan','card'];
 export const LIABILITY_TYPES = ['loan','card'];
 
@@ -102,7 +102,7 @@ export function shiftMonth(mk,n){ const [y,m]=mk.split('-').map(Number); const d
 export function daysInMonth(mk){ const [y,m]=mk.split('-').map(Number); return new Date(Date.UTC(y,m,0)).getUTCDate(); }
 export function rate(settings,c){ const r=(settings.rates||{})[c]; return Number(r)>0 ? Number(r) : 1; }
 export function toUSD(settings, amount, cur){ return Number(amount||0)/rate(settings,cur||'USD'); }
-export function fmt(settings, usd){ const c=settings.base||'USD'; const v=usd*rate(settings,c); const dec=c==='LBP'?0:(Math.abs(v)%1<0.005?0:2); const n=v.toLocaleString('en-US',{minimumFractionDigits:dec,maximumFractionDigits:dec}); return (c==='USD'?'$':c==='LBP'?'L.L. ':c==='EUR'?'€':c+' ')+n; }
+export function fmt(settings, usd){ const c=settings.base||'USD'; const v=usd*rate(settings,c); const dec=c==='LBP'?0:(Math.abs(v)%1<0.005?0:2); const n=v.toLocaleString('en-US',{minimumFractionDigits:dec,maximumFractionDigits:dec}); return (c==='USD'?'$':c==='LBP'?'L.L. ':c==='EUR'?'€':c==='AED'?'AED ':c+' ')+n; }
 export function newId(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
 export function memberName(settings, name){ if(!name) return null; const i=(settings.members||[]).findIndex(m=>m.toLowerCase()===String(name).toLowerCase()); return i>=0 ? settings.members[i] : null; }
 
@@ -116,6 +116,7 @@ export function parseLocal(settings, text, today){
   if(/\b(lira|lbp|l\.l\.?|ll|ليرة)\b/.test(t)) currency='LBP';
   else if(/\$|\b(usd|dollars?|bucks|دولار)\b/.test(t)) currency='USD';
   else if(/€|\b(eur|euros?)\b/.test(t)) currency='EUR';
+  else if(/\b(aed|dirhams?|درهم)\b/.test(t)) currency='AED';
   let amount=null; const m=t.match(/(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)?/);
   if(m){ amount=parseFloat(m[1].replace(/,/g,'')); const mult=m[2]; if(mult==='k'||mult==='thousand') amount*=1000; if(mult==='m'||mult==='million') amount*=1e6; }
   else { const w=wordsToNumber(t); if(w!=null) amount=w; }
@@ -145,9 +146,9 @@ export function analysisModel(){ return env('ANALYSIS_MODEL') || 'claude-sonnet-
 
 export async function parseWithClaude(settings, textIn, today){
   const system = `You turn one short spoken or typed note into expense records for a household ledger. Reply with only a JSON array of one or more objects (most notes are exactly one expense). No prose, no code fences.
-Today: ${today} (${weekdayIn(settings.timezone)}). Household members: ${settings.members.join(', ')}. Default currency: ${settings.base}. Other currencies in use: LBP (Lebanese lira; people say "lira", "L.L.", "500 thousand", "2 million" meaning lira) and EUR.
+Today: ${today} (${weekdayIn(settings.timezone)}). Household members: ${settings.members.join(', ')}. Default currency: ${settings.base}. Other currencies in use: LBP (Lebanese lira; people say "lira", "L.L.", "500 thousand", "2 million" meaning lira), EUR, and AED (UAE dirhams; "dirhams", "AED").
 Tags, pick exactly one per expense: ${TAGS.join(', ')}.
-Object shape: {"amount": number, "currency": "USD"|"LBP"|"EUR", "description": string, "tag": string, "date": "YYYY-MM-DD", "by": string|null, "note": string|null}
+Object shape: {"amount": number, "currency": "USD"|"LBP"|"EUR"|"AED", "description": string, "tag": string, "date": "YYYY-MM-DD", "by": string|null, "note": string|null}
 Rules: amount is the number spent (spoken numbers like "forty five" become 45; "1.2k" is 1200; "500 thousand lira" is 500000 LBP); the note may start with filler like "add to my expenses", ignore it; description is 2-6 words saying what or where, Title Case, with no amount or currency in it; date is today unless the note says otherwise (yesterday, last Tuesday, on the 3rd); by is a member name only when the note says who paid, else null; note keeps any leftover detail, else null. If no amount can be found, use 0.`;
   const res = await claudeMessage({ model: parseModel(), system, max_tokens: 400, messages:[{role:'user', content:`Note: """${String(textIn).replace(/"""/g,'"')}"""`}] });
   const data = await res.json();

@@ -351,8 +351,8 @@ nav.tabs button.on{color:#fff;background:linear-gradient(135deg,var(--a1),var(--
 const TAGS = ['Groceries','Dining','Coffee','Transport','Fuel','Kids','School','Health','Pharmacy','Home','Utilities','Shopping','Clothes','Beauty','Entertainment','Travel','Gifts','Pets','Fees','Other'];
 const TAG_ICON = {Groceries:'🛒',Dining:'🍽️',Coffee:'☕',Transport:'🚕',Fuel:'⛽',Kids:'🧸',School:'🎒',Health:'🩺',Pharmacy:'💊',Home:'🏠',Utilities:'💡',Shopping:'🛍️',Clothes:'👕',Beauty:'💅',Entertainment:'🎬',Travel:'✈️',Gifts:'🎁',Pets:'🐾',Fees:'🏦',Other:'•'};
 const KINDS = [['subscription','Subscriptions'],['salary','Staff salaries'],['housing','Housing'],['utility','Utilities'],['insurance','Insurance'],['other','Other']];
-const CURRENCIES = ['USD','LBP','EUR'];
-const DEFAULT_SETTINGS = { members:['Rudy','Aya'], people:['Noah'], base:'USD', rates:{USD:1, LBP:89500, EUR:0.92}, budget:null, timezone:'Asia/Beirut', goldPrice:null };
+const CURRENCIES = ['USD','LBP','EUR','AED'];
+const DEFAULT_SETTINGS = { members:['Rudy','Aya'], people:['Noah'], base:'USD', rates:{USD:1, LBP:89500, EUR:0.92, AED:3.6725}, budget:null, timezone:'Asia/Beirut', goldPrice:null };
 const ACC_TYPES=[['cash','Cash','💵'],['bank','Bank account','🏦'],['savings','Savings','🐷'],['investment','Investments','📈'],['gold','Gold','🪙'],['loan','Loan','📄'],['card','Credit card','💳']];
 const LIAB=['loan','card'];
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -382,7 +382,7 @@ function daysInMonth(mk){ const [y,m]=mk.split('-').map(Number); return new Date
 function dayLabel(dk){ const [y,m,d]=dk.split('-').map(Number); const dt=new Date(y,m-1,d); if(dk===todayKey()) return 'Today'; const yd=new Date(); yd.setDate(yd.getDate()-1); if(dk===dateKey(yd)) return 'Yesterday'; return dt.toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'}); }
 function rate(c){ const r=S.settings.rates||{}; return Number(r[c])>0 ? Number(r[c]) : 1; }
 function fromUSD(usd,cur){ return usd*rate(cur||S.settings.base); }
-function sym(c){ return c==='USD'?'$':c==='LBP'?'L.L. ':c==='EUR'?'€':c+' '; }
+function sym(c){ return c==='USD'?'$':c==='LBP'?'L.L. ':c==='EUR'?'€':c==='AED'?'AED ':c+' '; }
 function fmtAmt(amount,cur){ cur=cur||S.settings.base; const dec=(cur==='LBP')?0:(Math.abs(amount)%1<0.005?0:2); const n=Number(amount||0); return (n<0?'−':'')+sym(cur)+Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:dec,maximumFractionDigits:dec}); }
 function fmtBase(usd){ return fmtAmt(fromUSD(usd,S.settings.base), S.settings.base); }
 function fmtShort(usd){ const v=fromUSD(usd,S.settings.base); const c=S.settings.base; if(c==='LBP'){ if(v>=1e6) return 'L.L. '+(v/1e6).toFixed(1).replace(/\.0$/,'')+'M'; if(v>=1e3) return 'L.L. '+Math.round(v/1e3)+'k'; return 'L.L. '+Math.round(v); } if(v>=1e3) return sym(c)+(v/1e3).toFixed(v>=1e4?0:1).replace(/\.0$/,'')+'k'; return sym(c)+Math.round(v); }
@@ -813,7 +813,8 @@ function openSettingsSheet(){
     <div class="grid2"><div class="field"><label for="s-base">Show totals in</label><select id="s-base">${CURRENCIES.map(c=>`<option ${c===s.base?'selected':''}>${c}</option>`).join('')}</select></div>
     <div class="field"><label for="s-lbp">1 USD = ? LBP</label><input class="num" id="s-lbp" type="number" inputmode="numeric" value="${esc(s.rates.LBP||89500)}"></div></div>
     <div class="grid2"><div class="field"><label for="s-eur">1 USD = ? EUR</label><input class="num" id="s-eur" type="number" inputmode="decimal" step="any" value="${esc(s.rates.EUR||0.92)}"></div>
-    <div class="field"><label for="s-budget">Monthly budget (${esc(s.base)})</label><input class="num" id="s-budget" type="number" inputmode="decimal" value="${esc(s.budget||'')}" placeholder="Optional"></div></div>
+    <div class="field"><label for="s-aed">1 USD = ? AED</label><input class="num" id="s-aed" type="number" inputmode="decimal" step="any" value="${esc(s.rates.AED||3.6725)}"></div></div>
+    <div class="field"><label for="s-budget">Monthly budget (${esc(s.base)})</label><input class="num" id="s-budget" type="number" inputmode="decimal" value="${esc(s.budget||'')}" placeholder="Optional"></div>
     <div class="grid2"><div class="field"><label for="s-people">Also track for</label><input id="s-people" value="${esc((s.people||[]).join(', '))}" placeholder="Noah"><span class="help">Family members with savings but no phone.</span></div>
     <div class="field"><label for="s-gold">Gold price (USD per gram)</label><input class="num" id="s-gold" type="number" inputmode="decimal" step="any" value="${esc(s.goldPrice||'')}" placeholder="e.g. 130"></div></div>
     <div class="field"><label for="s-tz">Time zone</label><select id="s-tz">${['Asia/Beirut','Europe/Paris','Europe/London','Asia/Dubai','America/New_York'].map(z=>`<option ${z===(s.timezone||'Asia/Beirut')?'selected':''}>${z}</option>`).join('')}</select></div>
@@ -833,7 +834,7 @@ function openSettingsSheet(){
     $('s-save').onclick=async()=>{ const who=chipVal(root,'who'); if(who){ S.who=who; lsSet('who',who); }
       const members=$('s-members').value.split(',').map(x=>x.trim()).filter(Boolean);
       const people=$('s-people').value.split(',').map(x=>x.trim()).filter(Boolean);
-      const settings={ members: members.length?members:DEFAULT_SETTINGS.members, people, base:$('s-base').value, rates:{USD:1, LBP:Number($('s-lbp').value)||89500, EUR:Number($('s-eur').value)||0.92}, budget:Number($('s-budget').value)||null, timezone:$('s-tz').value, goldPrice:Number($('s-gold').value)||null };
+      const settings={ members: members.length?members:DEFAULT_SETTINGS.members, people, base:$('s-base').value, rates:{USD:1, LBP:Number($('s-lbp').value)||89500, EUR:Number($('s-eur').value)||0.92, AED:Number($('s-aed').value)||3.6725}, budget:Number($('s-budget').value)||null, timezone:$('s-tz').value, goldPrice:Number($('s-gold').value)||null };
       $('s-save').disabled=true; try{ const d=await api('settings',{method:'PUT',body:{settings}}); S.settings={...DEFAULT_SETTINGS,...d.settings}; closeSheet(); render(); toast('Settings saved'); }catch(err){ toast(errMsg(err)); $('s-save').disabled=false; } };
   });
 }

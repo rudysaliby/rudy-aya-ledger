@@ -92,7 +92,7 @@ export default async (req) => {
     if(route==='settings' && req.method==='PUT'){
       const s=body.settings||{}; const members=Array.isArray(s.members)? s.members.map(x=>String(x).trim().slice(0,30)).filter(Boolean) : settings.members;
       const people=Array.isArray(s.people)? s.people.map(x=>String(x).trim().slice(0,30)).filter(Boolean) : (settings.people||[]);
-      const doc={ members: members.length?members:DEFAULT_SETTINGS.members, people, base: CURRENCIES.includes(s.base)?s.base:settings.base, rates:{USD:1, LBP:Number(s.rates?.LBP)||settings.rates.LBP, EUR:Number(s.rates?.EUR)||settings.rates.EUR}, budget:Number(s.budget)||null, timezone:String(s.timezone||settings.timezone||'Asia/Beirut'), goldPrice:Number(s.goldPrice)||null };
+      const doc={ members: members.length?members:DEFAULT_SETTINGS.members, people, base: CURRENCIES.includes(s.base)?s.base:settings.base, rates:{USD:1, LBP:Number(s.rates?.LBP)||settings.rates.LBP, EUR:Number(s.rates?.EUR)||settings.rates.EUR, AED:Number(s.rates?.AED)||settings.rates.AED||3.6725}, budget:Number(s.budget)||null, timezone:String(s.timezone||settings.timezone||'Asia/Beirut'), goldPrice:Number(s.goldPrice)||null };
       await writeJSON('settings', doc);
       if(doc.goldPrice!==settings.goldPrice){ try{ await recordSnapshot(doc, await getAccounts(), today); }catch(e){} }
       return json({settings:doc});
