@@ -87,7 +87,7 @@ export default async (req) => {
       } else if(kind==='withdrawal'){
         const cash=await accountOfType(settings, accounts, 'cash', who, {create:true, currency:'USD'});
         const m=await withSync(settings, today, [acc?acc.id:null, cash?cash.id:null], ()=>saveMove(settings, {kind:'transfer', fromAcc: acc? acc.id : null, toAcc: cash? cash.id : null, amount, currency, desc:'Cash withdrawal'+(a.merchant? ' via '+String(a.description||a.merchant).slice(0,30):''), date, raw}, {by:who, source:'sms'}));
-        headline=`Moved ${fmt(settings, m.usd)} from ${accName} to ${cash? cash.name : 'cash'}.`;
+        headline=`Moved ${fmt(settings, m.usd)} from ${accName} to ${cash? cash.name : 'cash in hand'}.`;
       } else if(kind==='credit_in'){
         // salary or other money in: link to a planned income line when the amount is close (±20%)
         const income=await getIncome(); const usd=toUSD(settings, amount, currency);

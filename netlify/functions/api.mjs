@@ -42,7 +42,7 @@ export default async (req) => {
       let items, via='manual';
       const accounts=await getAccounts();
       if(body.text){ const r=await parseNote(settings, String(body.text).slice(0,500), today); items=r.items; via=r.via; }
-      else if(body.expense){ const e=body.expense; items=[{amount:Number(e.amount)||0, currency:CURRENCIES.includes(e.currency)?e.currency:settings.base, description:String(e.desc||e.description||'').slice(0,80)||'Expense', tag:TAGS.includes(e.tag)?e.tag:'Other', date:/^\d{4}-\d{2}-\d{2}$/.test(e.date||'')?e.date:today, by:e.by||null, note:e.note?String(e.note).slice(0,200):null, from:e.from||null}]; }
+      else if(body.expense){ const e=body.expense; items=[{amount:Number(e.amount)||0, currency:CURRENCIES.includes(e.currency)?e.currency:settings.base, description:String(e.desc||e.description||'').slice(0,80)||'Expense', tag:TAGS.includes(e.tag)?e.tag:'Other', date:/^\d{4}-\d{2}-\d{2}$/.test(e.date||'')?e.date:today, by:e.by||null, note:e.note?String(e.note).slice(0,200):null, from: e.from==='none'? 'none' : (e.from||null)}]; }
       else throw new HttpError(400,'Send text or expense');
       // a spoken/typed transfer ("moved 2000 to cash", "paid the card 4000") becomes a movement, not an expense
       const transfers=items.filter(i=>i.kind==='transfer' && i.amount>0); items=items.filter(i=>i.kind!=='transfer');
@@ -53,7 +53,7 @@ export default async (req) => {
       const needsFix = items.length===1 && !(items[0].amount>0);
       if(needsFix) return json({saved:[], draft:{...items[0], by: items[0].by||by}, via});
       // which account paid: said in the note, else this member's default, else nothing
-      for(const it of items){ if(it.from && accounts.some(a=>a.id===it.from)) continue; const owner=it.by||by; const want=it.paidWith || (settings.defaultPaid||{})[owner] || null; it.from = want? await resolveAcc(settings, accounts, want, owner) : null; }
+      for(const it of items){ if(it.from && accounts.some(a=>a.id===it.from)) continue; const owner=it.by||by; if(it.from==='none'){ it.from=null; continue; } const want=it.paidWith || (settings.defaultPaid||{})[owner] || 'cash'; it.from = await resolveAcc(settings, accounts, want, owner); }
       const saved = await withSync(settings, today, items.map(i=>i.from), ()=>saveExpenses(settings, items, {by, source: body.source||(body.text?'text':'manual')}));
       return json({saved, moves:movesSaved, via});
     }
@@ -61,9 +61,12 @@ export default async (req) => {
       const e=body.expense||{}; const from=String(body.month||e.month||''); if(!e.id || !/^\d{4}-\d{2}$/.test(from)) throw new HttpError(400,'Need id and month');
       const date=/^\d{4}-\d{2}-\d{2}$/.test(e.date||'')?e.date:today; const to=date.slice(0,7); const cur=CURRENCIES.includes(e.currency)?e.currency:settings.base;
       const old=(await getMonth(from)).find(x=>x.id===e.id); if(!old) throw new HttpError(404,'Expense not found');
-      const doc={...old, amount:Number(e.amount)||0, currency:cur, usd:toUSD(settings,e.amount,cur), desc:String(e.desc||'').slice(0,80)||'Expense', tag:TAGS.includes(e.tag)?e.tag:'Other', by:String(e.by||'').slice(0,40), date, month:to, note:e.note?String(e.note).slice(0,200):null, from: e.from===undefined? old.from||null : (e.from||null)};
-      if(to===from){ await mutateList('months/'+from, items=>items.map(x=>x.id===e.id?doc:x)); }
-      else { await mutateList('months/'+from, items=>items.filter(x=>x.id!==e.id)); await mutateList('months/'+to, items=>items.concat([doc])); }
+      let newFrom = e.from===undefined? (old.from||null) : (e.from||null);
+      if(newFrom==='none') newFrom=null; else if(newFrom==='auto'){ const accs=await getAccounts(); const owner=e.by||old.by||body.by||''; newFrom=await resolveAcc(settings, accs, (settings.defaultPaid||{})[owner]||'cash', owner); }
+      const doc={...old, amount:Number(e.amount)||0, currency:cur, usd:toUSD(settings,e.amount,cur), desc:String(e.desc||'').slice(0,80)||'Expense', tag:TAGS.includes(e.tag)?e.tag:'Other', by:String(e.by||'').slice(0,40), date, month:to, note:e.note?String(e.note).slice(0,200):null, from:newFrom};
+      await withSync(settings, today, [old.from, newFrom], async()=>{
+        if(to===from){ await mutateList('months/'+from, items=>items.map(x=>x.id===e.id?doc:x)); }
+        else { await mutateList('months/'+from, items=>items.filter(x=>x.id!==e.id)); await mutateList('months/'+to, items=>items.concat([doc])); } });
       return json({saved:[doc]});
     }
     if(route==='expense' && req.method==='DELETE'){

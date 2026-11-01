@@ -45,7 +45,7 @@ export async function accountOfType(settings, accounts, type, owner, {create=fal
   const any=pool; if(any.length===1 && !owner) return any[0];
   if(any.length && type==='savings') return any[0];
   if(create && type==='cash'){
-    const now=Date.now(); const doc={ id:newId(), name: owner? `Cash (${owner})` : 'Cash', type:'cash', owner:owner||'Joint', amount:0, currency:currency||settings.base, confirmed:{amount:0, date:new Date(now).toISOString().slice(0,10), ts:now}, active:true, ts:now };
+    const now=Date.now(); const doc={ id:newId(), name: owner? `Cash in hand (${owner})` : 'Cash in hand', type:'cash', owner:owner||'Joint', amount:0, currency:currency||settings.base, confirmed:{amount:0, date:new Date(now).toISOString().slice(0,10), ts:now}, active:true, ts:now };
     await mutateList('accounts', items=>items.concat([doc])); return doc;
   }
   return null;
@@ -84,7 +84,8 @@ export async function withSync(settings, today, ids, fn){
     const upd=ids.filter(id=>pre[id] && pre[id].gap===0 && post[id] && post[id].gap!==0);
     if(upd.length){
       const now=Date.now();
-      const items=await mutateList('accounts', items=>items.map(a=>{ if(!upd.includes(a.id)) return a; const v=Math.round(post[a.id].expected*100)/100; const extra = a.type==='card' && Number(a.limit)>0 ? {available: Math.max(0, Math.round((Number(a.limit)-v)*100)/100)} : {}; return {...a, ...extra, amount:v, confirmed:{amount:v, date:today, ts:now}, updatedAt:today}; }));
+      // move the balance only; the baseline (last real reading) stays where it is, so later edits of these bookings still count
+      const items=await mutateList('accounts', items=>items.map(a=>{ if(!upd.includes(a.id)) return a; const v=Math.round(post[a.id].expected*100)/100; const extra = a.type==='card' && Number(a.limit)>0 ? {available: Math.max(0, Math.round((Number(a.limit)-v)*100)/100)} : {}; return {...a, ...extra, amount:v, updatedAt:today}; }));
       await recordSnapshot(settings, items, today);
     }
   }
