@@ -434,10 +434,13 @@ async function api(path, {method='GET', body}={}){
   return data;
 }
 async function load(){
-  if(!S.key || S.loading) return; S.loading=true;
+  if(!S.key) return;
+  if(S.loading){ S.reloadPending=true; return; }   // a save during a poll: fetch again once it lands, so the older reply cannot hide the new entry
+  S.loading=true;
   try{ const d=await api('state'); S.settings={...DEFAULT_SETTINGS,...d.settings, rates:{...DEFAULT_SETTINGS.rates,...(d.settings.rates||{})}}; S.recurring=d.recurring||[]; S.income=d.income||[]; S.accounts=d.accounts||[]; S.networth=d.networth||[]; S.recon=d.recon||{}; S.check=d.check||null; S.cycles=d.cycles||{}; Object.assign(S.months, d.months||{}); Object.assign(S.moves, d.moves||{}); S.monthKeys=d.monthKeys||[]; S.loaded=true; render(); }
   catch(e){ if(e.code==='auth'){ signOut('That key no longer works.'); } else if(!S.loaded){ $('recentList').innerHTML='<li class="empty">'+esc(e.message||'Could not reach the ledger.')+'<br><button class="link" id="retryBtn">Try again</button></li>'; const b=$('retryBtn'); if(b) b.onclick=load; } }
   S.loading=false;
+  if(S.reloadPending){ S.reloadPending=false; load(); }
 }
 function monthItems(mk){ return S.months[mk]||[]; }
 async function ensureMonth(mk){ if(S.months[mk] || S.monthLoading[mk] || !S.key) return; S.monthLoading[mk]=true; try{ const d=await api('month?m='+mk); S.months[mk]=d.items||[]; S.moves[mk]=d.moves||[]; }catch(e){ S.months[mk]=[]; S.moves[mk]=[]; } S.monthLoading[mk]=false; render(); }
@@ -454,7 +457,7 @@ $('wGo').onclick=async()=>{
   const btn=$('wGo');
   if(!$('wKeyField').classList.contains('hide')){
     const k=$('w-key').value.trim(); if(!k) return; btn.disabled=true; btn.textContent='Checking…';
-    S.key=k; try{ await load(); if(!S.loaded) throw {message:'Could not reach the ledger.'}; lsSet('key',k); $('wErr').classList.add('hide'); $('wKeyField').classList.add('hide'); $('wWhoField').classList.remove('hide'); $('wIntro').textContent='Expenses added from this phone are marked as theirs. Saying "Aya paid…" overrides it.';
+    S.key=k; try{ await load(); if(!S.loaded) throw {message: S.key? 'Could not reach the ledger. Check the connection and try again.' : 'That key is not right. Check it in Netlify (HOUSEHOLD_KEY).'}; lsSet('key',k); $('wErr').classList.add('hide'); $('wKeyField').classList.add('hide'); $('wWhoField').classList.remove('hide'); $('wIntro').textContent='Expenses added from this phone are marked as theirs. Saying "Aya paid…" overrides it.';
       $('wWho').innerHTML=(S.settings.members||[]).map(m=>`<button type="button" class="chip ${m===S.who?'on':''}" data-chip="who" data-val="${esc(m)}" style="padding:12px 20px;font-size:16px"><i class="dot" style="background:${memberColor(m)}"></i>${esc(m)}</button>`).join(''); wireChips($('wWho')); btn.textContent="That's me";
     }catch(e){ S.key=''; $('wErr').textContent=e.message||'Wrong key'; $('wErr').classList.remove('hide'); btn.textContent='Continue'; }
     btn.disabled=false; return;
@@ -466,6 +469,8 @@ $('w-key').addEventListener('keydown',e=>{ if(e.key==='Enter') $('wGo').click();
 // ---------- rendering ----------
 function render(){ renderHeader(); if(S.tab==='add') renderAdd(); if(S.tab==='history') renderHistory(); if(S.tab==='plan') renderPlan(); if(S.tab==='wealth') renderWealth(); if(S.tab==='insights') renderInsights(); }
 function renderHeader(){ const b=$('whoBtn'); b.textContent=initial(S.who||'?'); b.style.background=S.who? memberColor(S.who):'var(--faint)'; const ms=S.settings.members||[]; $('brandName').textContent = ms.length? ms.join(' & ') : 'Ledger'; }
+/** Month-end projection of day-to-day spending; before day 3 there is too little to go on, so the total so far is used. */
+function projectedTotal(st){ return st.elapsed>=3 ? st.total/st.elapsed*st.dim : st.total; }
 function monthStats(mk){
   const ex=monthItems(mk); const byTag={}, byPerson={}, byDay={}; let total=0;
   for(const e of ex){ total+=e.usd; byTag[e.tag]=(byTag[e.tag]||0)+e.usd; const p=e.by||'Unknown'; byPerson[p]=(byPerson[p]||0)+e.usd; const d=Number(e.date.slice(8,10)); byDay[d]=(byDay[d]||0)+e.usd; }
@@ -520,12 +525,12 @@ function renderHistory(){
 }
 function renderPlan(){
   const active=S.recurring.filter(r=>r.active!==false); const total=active.reduce((a,r)=>a+recMonthlyUSD(r),0);
-  const inc=incomeUSD(); const cm=monthKey(new Date()); const cur=monthStats(cm); const avgDay = cur.elapsed? cur.total/cur.elapsed*cur.dim : 0;
+  const inc=incomeUSD(); const cm=monthKey(new Date()); const cur=monthStats(cm); const avgDay = projectedTotal(cur);
   $('planTiles').innerHTML = `
     <div class="tile"><span class="k">Income</span><span class="v" style="color:var(--good)">${esc(fmtBase(Math.round(inc)))}</span><span class="d">per month</span></div>
     <div class="tile"><span class="k">Fixed costs</span><span class="v">${esc(fmtBase(Math.round(total)))}</span><span class="d">${active.length} active · ${esc(fmtShort(total*12))} a year</span></div>
     <div class="tile"><span class="k">After fixed costs</span><span class="v">${esc(fmtBase(Math.round(inc-total)))}</span><span class="d">${inc>0? Math.round((inc-total)/inc*100)+'% of income free' : 'add your income'}</span></div>
-    <div class="tile"><span class="k">Projected left</span><span class="v" style="color:${inc-total-avgDay>=0?'var(--good)':'var(--bad)'}">${esc(fmtBase(Math.round(inc-total-avgDay)))}</span><span class="d">this month, at the current pace</span></div>`;
+    <div class="tile"><span class="k">${cur.elapsed>=3?'Projected left':'Left so far'}</span><span class="v" style="color:${inc-total-avgDay>=0?'var(--good)':'var(--bad)'}">${esc(fmtBase(Math.round(inc-total-avgDay)))}</span><span class="d">${cur.elapsed>=3?'this month, at the current pace':'this month · too early to project'}</span></div>`;
   const il=$('incomeList');
   if(!S.loaded){ il.innerHTML='<li class="empty">Loading…</li>'; }
   else if(!S.income.length){ il.innerHTML='<li class="empty"><b>No income recorded.</b><br>Add your salary and Aya\'s so the dashboard shows what is left each month.</li>'; }
@@ -549,13 +554,14 @@ function renderWealth(){
   const gold=assets.filter(a=>a.type==='gold'); const grams=gold.reduce((t,a)=>t+(Number(a.grams)||0),0); const goldUSD=gold.reduce((t,a)=>t+accountUSD(a),0);
   $('nwTotal').textContent=fmtBase(Math.round(net)); $('nwTotal').style.color = net<0? '#ffb4b4' : '#fff';
   $('nwSub').innerHTML = `<span>Assets <b>${fmtShort(sumA)}</b></span><span>Debts <b>${fmtShort(sumD)}</b></span>${grams? `<span>Gold <b>${grams.toLocaleString()} g</b>${goldUSD? ' · '+fmtShort(goldUSD):''}</span>`:''}`;
-  const cm=monthKey(new Date()); const st=monthStats(cm); const spend = (st.elapsed? st.total/st.elapsed*st.dim : st.total) + st.fixed; const runway = spend>0? liquid/spend : null;
-  const pts=S.networth||[]; const prev = pts.length>=2 ? pts.find(p=>p.date<=shiftMonthDate(30)) || pts[0] : null; const prevNet = prev? prev.assets-prev.debts : null;
+  const cm=monthKey(new Date()); const st=monthStats(cm); const spend = projectedTotal(st) + st.fixed; const runway = spend>0? liquid/spend : null;
+  // compare with the latest snapshot at least 30 days old; with less history than that, with the first one there is
+  const pts=S.networth||[]; const cutoff=shiftMonthDate(30); const prev = pts.length>=2 ? ([...pts].reverse().find(p=>p.date<=cutoff) || pts[0]) : null; const prevNet = prev? prev.assets-prev.debts : null; const prevIs30 = !!(prev && prev.date<=cutoff);
   $('nwTiles').innerHTML = `
     <div class="tile"><span class="k">Everyday money</span><span class="v">${esc(fmtBase(Math.round(liquid)))}</span><span class="d">bank &amp; cash in hand${runway!=null? ' · '+(runway>=24?'2y+':runway.toFixed(1)+' mo')+' of spending':''}</span></div>
     <div class="tile"><span class="k">Long-term savings</span><span class="v" style="color:var(--good)">${esc(fmtBase(Math.round(savedUSD)))}</span><span class="d">${savedThisMonth? '+'+esc(fmtShort(savedThisMonth))+' put aside this month' : 'not touched'}</span></div>
     ${(()=>{ const cards=debts.filter(a=>a.type==='card' && S.cycles[a.id] && S.cycles[a.id].payDay); if(!cards.length) return `<div class="tile"><span class="k">Debt ratio</span><span class="v">${sumA>0? Math.round(sumD/sumA*100)+'%' : '—'}</span><span class="d">debts vs assets</span></div>`; const dueUSD=cards.reduce((t,a)=>t+S.cycles[a.id].due/rate(a.currency),0); const first=cards.map(a=>S.cycles[a.id].nextPayDate).sort()[0]; return `<div class="tile"><span class="k">Card payment due</span><span class="v" style="color:var(--warn)">${esc(fmtBase(Math.round(dueUSD)))}</span><span class="d">${esc(dayLabel(first))}${cards.length>1?' · '+cards.length+' cards':''}</span></div>`; })()}
-    <div class="tile"><span class="k">30-day change</span><span class="v" style="color:${prevNet==null?'inherit':net-prevNet>=0?'var(--good)':'var(--bad)'}">${prevNet==null? '—' : (net-prevNet>=0?'+':'−')+esc(fmtShort(Math.abs(net-prevNet)))}</span><span class="d">${prevNet==null? 'needs a month of history' : 'in net worth'}</span></div>`;
+    <div class="tile"><span class="k">${prevIs30? '30-day change' : 'Change'}</span><span class="v" style="color:${prevNet==null?'inherit':net-prevNet>=0?'var(--good)':'var(--bad)'}">${prevNet==null? '—' : (net-prevNet>=0?'+':'−')+esc(fmtShort(Math.abs(net-prevNet)))}</span><span class="d">${prevNet==null? 'needs a few days of history' : (prevIs30? 'in net worth' : 'in net worth since '+esc(dayLabel(prev.date)))}</span></div>`;
   // by person (net per owner)
   const byO={}; for(const a of acc){ const o=a.owner||'Joint'; byO[o]=(byO[o]||0)+(LIAB.includes(a.type)? -accountUSD(a) : accountUSD(a)); }
   const names=owners().filter(o=>byO[o]!=null).concat(Object.keys(byO).filter(o=>!owners().includes(o))); const tot=names.reduce((t,o)=>t+Math.max(0,byO[o]),0)||1;
@@ -569,7 +575,7 @@ function renderWealth(){
   // accounts whose reading disagrees with what is logged
   const gaps=acc.filter(a=>S.recon[a.id] && S.recon[a.id].gap);
   const attn=$('attnCard');
-  if(gaps.length){ attn.classList.remove('hide'); attn.innerHTML=`<h2 style="margin-bottom:8px">Needs a look</h2><div class="muted" style="font-size:13.5px;line-height:1.5">${gaps.map(a=>{ const r=S.recon[a.id]; const liab=a.type==='card'; const out = liab? r.gap>0 : r.gap<0; return `<div><b>${esc(a.name)}</b>: ${out? 'about '+esc(fmtAmt(Math.abs(r.gap),a.currency))+' left it that is not logged' : esc(fmtAmt(Math.abs(r.gap),a.currency))+' more than expected'} (expected ${esc(fmtAmt(r.expected,a.currency))}, ${liab?'owes':'has'} ${esc(fmtAmt(r.actual,a.currency))}). Tap it to explain.</div>`; }).join('')}</div>`; }
+  if(gaps.length){ attn.classList.remove('hide'); attn.innerHTML=`<h2 style="margin-bottom:8px">Needs a look</h2><div class="muted" style="font-size:13.5px;line-height:1.5">${gaps.map(a=>{ const r=S.recon[a.id]; return `<div><b>${esc(a.name)}</b>: ${esc(gapText(a, r))} (expected ${esc(fmtAmt(r.expected,a.currency))}, ${a.type==='card'?'owes':'has'} ${esc(fmtAmt(r.actual,a.currency))}). Tap it to explain.</div>`; }).join('')}</div>`; }
   else attn.classList.add('hide');
   // lists
   const row=a=>{ const t=accType(a.type); const v=accountUSD(a); const liab=LIAB.includes(a.type); const r=S.recon[a.id]; const gapChip = r? (r.gap? `<span class="gap">gap ${esc(fmtAmt(r.gap,a.currency))}</span>` : (r.confirmed? `<span class="gap ok">✓ reconciled</span>` : '')) : ''; const goldMeta = a.type==='gold'? `${(Number(a.grams)||0).toLocaleString()} g${Number(S.settings.goldPrice)? '' : ' · set the gold price in Settings'}` : (a.type==='card'? (()=>{ const c=S.cycles[a.id]; const parts=[]; if(c && c.payDay){ parts.push(`due ${esc(dayLabel(c.nextPayDate))}: ${fmtAmt(c.due,a.currency)}`); parts.push(`since statement: ${fmtAmt(c.sinceStatement,a.currency)}`); } else if(a.limit){ parts.push(`limit ${fmtAmt(a.limit,a.currency)}`); if(a.available!=null) parts.push('available '+fmtAmt(a.available,a.currency)); } if(a.last4) parts.push('···'+a.last4); return parts.join(' · '); })() : ''); const orig=(a.type!=='gold' && a.currency!==S.settings.base)? `<small>${esc(fmtAmt(a.amount,a.currency))}</small>`:'';
@@ -581,6 +587,8 @@ function renderWealth(){
   dl.innerHTML = debts.length? [...debts].sort((a,b)=>accountUSD(b)-accountUSD(a)).map(row).join('') : '<li class="empty">No debts recorded. Loans and credit-card balances go here.</li>';
 }
 function shiftMonthDate(days){ const d=new Date(); d.setDate(d.getDate()-days); return dateKey(d); }
+/** One sentence on a reconciliation gap, in the account's own terms (a card owes; a bank or pocket holds). */
+function gapText(a, r){ const amt=fmtAmt(Math.abs(r.gap),a.currency); if(a.type==='card') return r.gap>0? 'about '+amt+' charged to it that is not logged' : amt+' less owed than expected (a payment or refund not logged?)'; return r.gap<0? 'about '+amt+' left it that is not logged' : amt+' more than expected (money in that is not logged?)'; }
 
 // ---------- insights: range ----------
 function dataMonths(){ const cm=monthKey(new Date()); const set=new Set(S.monthKeys.filter(m=>m<=cm)); set.add(cm); return [...set].sort(); }
@@ -617,15 +625,15 @@ function renderInsights(){
   const members=S.settings.members||[];
   // tiles
   if(single){
-    const pv=monthStats(shiftMonth(mk,-1)); const dailyAvg = st.elapsed? st.total/st.elapsed : 0; const projected = isCur ? dailyAvg*st.dim : st.total; const all = st.total+st.fixed;
+    const pv=monthStats(shiftMonth(mk,-1)); const dailyAvg = st.elapsed? st.total/st.elapsed : 0; const projected = isCur ? projectedTotal(st) : st.total; const canProject = !isCur || st.elapsed>=3; const all = st.total+st.fixed;
     const delta=(a,b)=>{ if(!b) return ''; const p=Math.round((a-b)/b*100); if(Math.abs(p)<1) return '<span class="d">same as last month</span>'; return `<span class="d ${p>0?'up':'down'}">${p>0?'▲':'▼'} ${Math.abs(p)}% vs last month</span>`; };
     const inc=incomeUSD(); const left = inc - (isCur? projected : st.total) - st.fixed;
     $('tiles').innerHTML = `
       <div class="tile"><span class="k">All in</span><span class="v">${esc(fmtBase(all))}</span><span class="d">day-to-day + fixed</span></div>
-      ${inc>0? `<div class="tile"><span class="k">${isCur?'Left at month end':'Left over'}</span><span class="v" style="color:${left>=0?'var(--good)':'var(--bad)'}">${esc(fmtBase(Math.round(left)))}</span><span class="d">${Math.round(left/inc*100)}% of ${esc(fmtShort(inc))} income</span></div>` : `<div class="tile"><span class="k">${isCur?'Projected':'Daily average'}</span><span class="v">${esc(fmtBase(Math.round(isCur? projected+st.fixed : (st.total/st.dim))))}</span><span class="d">${isCur? fmtBase(Math.round(dailyAvg))+' a day' : 'per day'}</span></div>`}
-      <div class="tile"><span class="k">Day-to-day</span><span class="v">${esc(fmtBase(st.total))}</span>${delta(st.total, isCur? pv.total*(st.elapsed/pv.dim) : pv.total)||'<span class="d">'+st.count+' items</span>'}</div>
+      ${inc>0? `<div class="tile"><span class="k">${isCur? (canProject?'Left at month end':'Left so far') :'Left over'}</span><span class="v" style="color:${left>=0?'var(--good)':'var(--bad)'}">${esc(fmtBase(Math.round(left)))}</span><span class="d">${Math.round(left/inc*100)}% of ${esc(fmtShort(inc))} income</span></div>` : `<div class="tile"><span class="k">${isCur?'Projected':'Daily average'}</span><span class="v">${esc(fmtBase(Math.round(isCur? projected+st.fixed : (st.total/st.dim))))}</span><span class="d">${isCur? (canProject? fmtBase(Math.round(dailyAvg))+' a day' : 'so far · too early to project') : 'per day'}</span></div>`}
+      <div class="tile"><span class="k">Day-to-day</span><span class="v">${esc(fmtBase(st.total))}</span>${(isCur && st.elapsed<3 ? '' : delta(st.total, isCur? pv.total*(st.elapsed/pv.dim) : pv.total))||'<span class="d">'+st.count+' items</span>'}</div>
       <div class="tile"><span class="k">Fixed costs</span><span class="v">${esc(fmtBase(st.fixed))}</span><span class="d">${S.recurring.filter(r=>r.active!==false).length} recurring</span></div>
-      ${inc>0? `<div class="tile"><span class="k">${isCur?'Projected':'Daily average'}</span><span class="v">${esc(fmtBase(Math.round(isCur? projected+st.fixed : (st.total/st.dim))))}</span><span class="d">${isCur? fmtBase(Math.round(dailyAvg))+' a day · '+st.elapsed+' of '+st.dim+' days' : 'per day'}</span></div>
+      ${inc>0? `<div class="tile"><span class="k">${isCur?'Projected':'Daily average'}</span><span class="v">${esc(fmtBase(Math.round(isCur? projected+st.fixed : (st.total/st.dim))))}</span><span class="d">${isCur? (canProject? fmtBase(Math.round(dailyAvg))+' a day · '+st.elapsed+' of '+st.dim+' days' : 'so far · too early to project') : 'per day'}</span></div>
       <div class="tile"><span class="k">Income</span><span class="v" style="color:var(--good)">${esc(fmtBase(Math.round(inc)))}</span><span class="d">per month</span></div>` : ''}`;
   } else {
     const n=agg.months; const prior=[]; for(let i=1;i<=n;i++) prior.push(monthStats(shiftMonth(S.range[0],-i)).total); const priorTotal=prior.reduce((a,b)=>a+b,0);
@@ -641,19 +649,21 @@ function renderInsights(){
       <div class="tile"><span class="k">Income</span><span class="v" style="color:var(--good)">${esc(fmtBase(Math.round(inc*n)))}</span><span class="d">${esc(fmtShort(inc))} a month</span></div>` : ''}`;
   }
   // budget
-  const bc=$('budgetCard'); const budget=Number(S.settings.budget)||0;
+  // the budget is typed in the base currency; everything else here is in USD
+  const bc=$('budgetCard'); const budget=(Number(S.settings.budget)||0)/rate(S.settings.base);
   if(budget>0 && single){ bc.classList.remove('hide'); const used=st.total+st.fixed; const pct=Math.min(100,used/budget*100); const left=budget-used; bc.innerHTML=`<div class="row-between"><h2>Monthly budget</h2><span class="num" style="font-weight:700">${esc(fmtBase(used))} <span class="muted">/ ${esc(fmtBase(budget))}</span></span></div><div class="track"><i class="${used>budget?'over':''}" style="width:${pct}%"></i></div><div class="muted" style="font-size:13px">${used>budget? '<span style="color:var(--bad);font-weight:700">Over by '+esc(fmtBase(used-budget))+'</span>' : esc(fmtBase(left))+' left'+(isCur&&st.dim>st.elapsed? ' · '+esc(fmtBase(Math.round(Math.max(0,left)/(st.dim-st.elapsed))))+' a day for the rest of the month':'')}</div>`; }
   else if(budget>0){ bc.classList.remove('hide'); const used=agg.total+agg.fixed*agg.months; const cap=budget*agg.months; const pct=Math.min(100,used/cap*100); bc.innerHTML=`<div class="row-between"><h2>Budget over ${agg.months} months</h2><span class="num" style="font-weight:700">${esc(fmtBase(used))} <span class="muted">/ ${esc(fmtBase(cap))}</span></span></div><div class="track"><i class="${used>cap?'over':''}" style="width:${pct}%"></i></div><div class="muted" style="font-size:13px">${used>cap? '<span style="color:var(--bad);font-weight:700">Over by '+esc(fmtBase(used-cap))+'</span>' : esc(fmtBase(cap-used))+' under budget'}</div>`; }
   else bc.classList.add('hide');
   // month check (current month only)
   const ck=$('checkCard'); const c=S.check;
-  if(single && isCur && c && c.month===mk){ ck.classList.remove('hide'); const allIn=c.spentUSD+st.fixed; const expected=c.incomeUSD+c.refundsUSD-allIn; const unexp = c.actualDelta==null? null : Math.round(c.actualDelta-expected-c.adjustUSD);
+  // compares what was logged (income, spending, refunds) with how the balances actually moved; planned fixed costs are
+  // not bookings, so they only enter once they are logged as expenses or show up as a gap on an account
+  if(single && isCur && c && c.month===mk){ ck.classList.remove('hide'); const allIn=c.spentUSD; const expected=c.incomeUSD+c.refundsUSD-allIn; const unexp = c.actualDelta==null? null : Math.round(c.actualDelta-expected-c.adjustUSD);
     const gapsN=Object.values(S.recon).filter(r=>r.gap).length;
     ck.innerHTML=`<div class="row-between"><h2>Month check</h2><span class="muted" style="font-size:12px">${esc(monthShort(mk))}</span></div>
       <div class="line"><span>Income received</span><b>${esc(fmtBase(Math.round(c.incomeUSD)))}</b></div>
       ${c.planned.length? `<div class="muted" style="font-size:12.5px;margin-top:-4px">${c.planned.map(p=>`${p.received?'✓':'·'} ${esc(p.name)}`).join(' · ')}</div>`:''}
-      <div class="line"><span>Day-to-day spending</span><b>−${esc(fmtBase(Math.round(c.spentUSD)))}</b></div>
-      <div class="line"><span>Fixed costs</span><b>−${esc(fmtBase(Math.round(st.fixed)))}</b></div>
+      <div class="line"><span>Spending logged</span><b>−${esc(fmtBase(Math.round(c.spentUSD)))}</b></div>
       ${c.refundsUSD? `<div class="line"><span>Refunds</span><b>+${esc(fmtBase(Math.round(c.refundsUSD)))}</b></div>`:''}
       ${c.savedUSD? `<div class="line"><span>Moved to long-term savings</span><b style="color:var(--good)">${esc(fmtBase(Math.round(c.savedUSD)))}</b></div>`:''}
       <div class="line total"><span>Should have ${expected>=0?'grown':'shrunk'} by</span><b>${esc(fmtBase(Math.round(Math.abs(expected))))}</b></div>
@@ -759,6 +769,8 @@ function errMsg(e){ return e&&e.message? e.message : 'Could not save. Check your
 function openExpenseSheet(e){
   const isNew=!e || !e.id; e=e||{}; const d={amount:'',currency:S.settings.base,desc:'',tag:'Other',by:S.who||'',date:todayKey(),note:'',...e};
   const members=S.settings.members||[];
+  // a new expense defaults to this member's usual account; an existing one keeps its account, or stays untracked
+  const fromSel = isNew ? (d.from && accById(d.from)? d.from : 'auto') : (d.from && accById(d.from)? d.from : 'none');
   openSheet(`<div class="grab"></div><h3>${isNew?'New expense':'Edit expense'}</h3><div class="form">
     <div class="grid2"><div class="field"><label for="f-amount">Amount</label><input class="num" id="f-amount" type="number" inputmode="decimal" step="any" value="${esc(d.amount)}" placeholder="0"></div>
     <div class="field"><label for="f-cur">Currency</label><select id="f-cur">${CURRENCIES.map(c=>`<option ${c===d.currency?'selected':''}>${c}</option>`).join('')}</select></div></div>
@@ -766,7 +778,7 @@ function openExpenseSheet(e){
     <div class="field"><label>Category</label><div class="chips">${chipsHTML('tag',TAGS,d.tag)}</div></div>
     <div class="grid2"><div class="field"><label>Paid by</label><div class="chips">${chipsHTML('by',members,d.by,true)}</div></div>
     <div class="field"><label for="f-date">Date</label><input id="f-date" type="date" value="${esc(d.date)}"></div></div>
-    <div class="field"><label for="f-from">Paid from</label><select id="f-from"><option value="auto" ${!d.from||d.from==='auto'?'selected':''}>Default for ${esc(d.by||S.who||'this person')} (${esc(((S.settings.defaultPaid||{})[d.by||S.who]||'cash'))})</option>${S.accounts.filter(a=>a.active!==false && ['cash','bank','savings','card'].includes(a.type)).map(a=>`<option value="${esc(a.id)}" ${a.id===d.from?'selected':''}>${esc(a.name)} (${esc(a.owner||'Joint')})</option>`).join('')}<option value="none">Not tracked</option></select></div>
+    <div class="field"><label for="f-from">Paid from</label><select id="f-from"><option value="auto" ${fromSel==='auto'?'selected':''}>Default for ${esc(d.by||S.who||'this person')} (${esc(((S.settings.defaultPaid||{})[d.by||S.who]||'cash'))})</option>${S.accounts.filter(a=>a.active!==false && ['cash','bank','savings','card'].includes(a.type)).map(a=>`<option value="${esc(a.id)}" ${a.id===fromSel?'selected':''}>${esc(a.name)} (${esc(a.owner||'Joint')})</option>`).join('')}<option value="none" ${fromSel==='none'?'selected':''}>Not tracked</option></select></div>
     <div class="field"><label for="f-note">Note</label><input id="f-note" value="${esc(d.note||'')}" placeholder="Optional"></div>
     <div class="actions"><div>${isNew?'':'<button type="button" class="danger" id="f-del">Delete</button>'}</div><div class="right"><button type="button" class="secondary" id="f-cancel">Cancel</button><button type="button" class="primary" id="f-save">${isNew?'Add':'Save'}</button></div></div>
   </div>`, root=>{
@@ -857,20 +869,22 @@ function openAccountSheet(a, debtDefault, savedDefault){
     const sync=()=>{ const t=(ACC_TYPES.find(x=>x[1]===chipVal(root,'type'))||ACC_TYPES[1])[0]; const gold=t==='gold', card=t==='card', bank=t==='bank'; $('a-goldf').classList.toggle('hide',!gold); $('a-cardf').classList.toggle('hide',!card); $('a-cyclef').classList.toggle('hide',!card); $('a-duef').classList.toggle('hide',!card); $('a-last4f').classList.toggle('hide',!(card||bank)); $('a-maskf').classList.toggle('hide',!bank); $('a-last4-l').textContent = bank? 'Debit card ending (last 4 digits)' : 'Card ending (last 4 digits)'; $('a-money').classList.toggle('hide',gold && Number(S.settings.goldPrice)>0); $('a-amount-l').textContent = card? 'Amount owed (auto when limit and available are set)' : LIAB.includes(t)? 'Amount owed' : (gold? 'Value (if no gold price set)' : 'Balance'); const pr=Number(S.settings.goldPrice)||0; $('a-goldhelp').textContent = pr? `Valued at ${fmtAmt(pr,'USD')} per gram (change it in Settings).` : 'Set a gold price per gram in Settings to value it automatically, or enter the value below.';
       if(card){ const lim=Number($('a-limit').value)||0, av=$('a-avail').value===''? null : Number($('a-avail').value); if(lim>0 && av!=null){ $('a-amount').value=Math.round((lim-Math.min(lim,av))*100)/100; } $('a-cardhelp').textContent='Bank alerts that mention the available balance update the debt automatically (limit − available).'; } };
     root.querySelectorAll('[data-chip="type"]').forEach(b=>b.addEventListener('click',sync)); $('a-limit').addEventListener('input',sync); $('a-avail').addEventListener('input',sync); sync();
-    let bucket=bucketOf(a); root.querySelectorAll('#a-bucket button').forEach(b=>b.onclick=()=>{ bucket=b.dataset.b; root.querySelectorAll('#a-bucket button').forEach(x=>x.classList.toggle('on',x===b)); });
-    const syncBucket=()=>{ const t=(ACC_TYPES.find(x=>x[1]===chipVal(root,'type'))||ACC_TYPES[1])[0]; $('a-bucketf').classList.toggle('hide', LIAB.includes(t)); }; root.querySelectorAll('[data-chip="type"]').forEach(b=>b.addEventListener('click',syncBucket)); syncBucket();
+    let bucket=bucketOf(a), bucketTouched=!isNew || !!a.bucket; const showBucket=()=>root.querySelectorAll('#a-bucket button').forEach(x=>x.classList.toggle('on',x.dataset.b===bucket));
+    root.querySelectorAll('#a-bucket button').forEach(b=>b.onclick=()=>{ bucket=b.dataset.b; bucketTouched=true; showBucket(); });
+    // until the pot is chosen by hand, it follows the type (gold and savings are long-term; bank and cash in hand are everyday)
+    const syncBucket=()=>{ const t=(ACC_TYPES.find(x=>x[1]===chipVal(root,'type'))||ACC_TYPES[1])[0]; $('a-bucketf').classList.toggle('hide', LIAB.includes(t)); if(!bucketTouched){ bucket=bucketOf({type:t}); showBucket(); } }; root.querySelectorAll('[data-chip="type"]').forEach(b=>b.addEventListener('click',syncBucket)); syncBucket();
     if(isNew) setTimeout(()=>$('a-name').focus(),300);
     const rc=S.recon[a.id]; if(!isNew && rc){ const liab=a.type==='card'; const out = liab? rc.gap>0 : rc.gap<0;
-      $('a-recon').innerHTML = rc.gap? `Expected ${esc(fmtAmt(rc.expected,a.currency))} from what is logged${rc.since?' since '+esc(rc.since):''}; the ${liab?'card says you owe':'balance is'} ${esc(fmtAmt(rc.actual,a.currency))}. <b>${esc(fmtAmt(Math.abs(rc.gap),a.currency))} ${out?'left this account without being logged':'more than expected'}.</b> Type the balance above whenever you check it; then explain any gap here.` : (rc.confirmed? `Matches what is logged (checked ${esc(rc.since||'')}). Type a new balance above whenever you check the account.` : 'Type the balance above to start tracking it.');
+      $('a-recon').innerHTML = rc.gap? `Expected ${esc(fmtAmt(rc.expected,a.currency))} from what is logged${rc.since?' since '+esc(rc.since):''}; the ${liab?'card says you owe':'balance is'} ${esc(fmtAmt(rc.actual,a.currency))}. <b>${esc(gapText(a, rc))}.</b> Type the balance above whenever you check it; then explain any gap here.` : (rc.confirmed? `Matches what is logged (checked ${esc(rc.since||'')}). Type a new balance above whenever you check the account.` : 'Type the balance above to start tracking it.');
       const btns=[]; if(rc.gap){ if(out && !liab) btns.push(['withdrawal','I withdrew cash']); if(out) btns.push(['expense','Forgot an expense']); if(out) btns.push(['fee','Bank fee / interest']); btns.push(['accept', out? 'Accept as is' : 'Accept as is']); }
       $('a-resolve').innerHTML = btns.map(([k,l])=>`<button type="button" class="secondary" data-resolve="${k}">${l}</button>`).join('');
       root.querySelectorAll('[data-resolve]').forEach(b=>b.onclick=async()=>{ b.disabled=true; try{ const d=await api('account/resolve',{method:'POST',body:{id:a.id, action:b.dataset.resolve, by:S.who||''}}); S.accounts=d.accounts||S.accounts; S.recon=d.recon||S.recon; closeSheet(); toast('Explained'); render(); load(); }catch(err){ toast(errMsg(err)); b.disabled=false; } }); }
     $('a-cancel').onclick=closeSheet;
-    if(!isNew) $('a-del').onclick=async()=>{ if($('a-del').dataset.arm){ try{ const d=await api('account',{method:'DELETE',body:{id:a.id}}); S.accounts=d.accounts||[]; S.networth=d.networth||S.networth; closeSheet(); toast('Deleted'); render(); }catch(err){ toast(errMsg(err)); } } else { $('a-del').dataset.arm='1'; $('a-del').textContent='Tap again to delete'; } };
+    if(!isNew) $('a-del').onclick=async()=>{ if($('a-del').dataset.arm){ try{ const d=await api('account',{method:'DELETE',body:{id:a.id}}); S.accounts=d.accounts||[]; S.networth=d.networth||S.networth; S.recon=d.recon||S.recon; closeSheet(); toast('Deleted'); render(); load(); }catch(err){ toast(errMsg(err)); } } else { $('a-del').dataset.arm='1'; $('a-del').textContent='Tap again to delete'; } };
     $('a-save').onclick=async()=>{ const name=$('a-name').value.trim(); if(!name){ $('a-name').focus(); return; } const t=(ACC_TYPES.find(x=>x[1]===chipVal(root,'type'))||ACC_TYPES[1])[0];
       const item={ id:a.id, name, type:t, owner:chipVal(root,'owner')||'Joint', amount:Number($('a-amount').value)||0, currency:$('a-cur').value, grams: t==='gold'? Number($('a-grams').value)||0 : null, limit: t==='card'? Number($('a-limit').value)||null : null, available: t==='card' && $('a-avail').value!==''? Number($('a-avail').value) : null, last4: (t==='card'||t==='bank')? $('a-last4').value.replace(/\D/g,'').slice(-4)||null : null, mask: t==='bank'? $('a-mask').value.trim()||null : null, bucket, payDay: t==='card'? Number($('a-payday').value)||null : null, statementDay: t==='card'? Number($('a-stday').value)||null : null, due: t==='card' && $('a-due').value!==''? Number($('a-due').value) : null, note:$('a-note').value.trim()||null, active:true, ts:a.ts };
       if(t!=='gold' && !(item.amount>=0)){ $('a-amount').focus(); return; }
-      $('a-save').disabled=true; try{ const d=await api('account',{method:'POST',body:{item}}); S.accounts=d.accounts||S.accounts; S.networth=d.networth||S.networth; S.recon=d.recon||S.recon; closeSheet(); toast('Saved '+name); render(); }catch(err){ toast(errMsg(err)); $('a-save').disabled=false; } };
+      $('a-save').disabled=true; try{ const d=await api('account',{method:'POST',body:{item}}); S.accounts=d.accounts||S.accounts; S.networth=d.networth||S.networth; S.recon=d.recon||S.recon; closeSheet(); toast('Saved '+name); render(); load(); }catch(err){ toast(errMsg(err)); $('a-save').disabled=false; } };
   });
 }
 function openTransferSheet(){
@@ -932,7 +946,7 @@ function openSettingsSheet(){
       <div><button type="button" class="secondary" id="s-copy2">Copy address</button></div>
     </div>
     <div class="field"><label>Bank SMS automation for this phone</label>
-      <div class="help">Catches every card payment the bank texts you about. Shortcuts → Automation → <b>+</b> → <b>Message</b> → Message Contains <b>HSBC</b> → Run Immediately. Add <b>Get Contents of URL</b> with the address below, Method <b>POST</b>, Request Body <b>Form</b>, one field <b>text</b> = Shortcut Input.</div>
+      <div class="help">Catches every card payment, withdrawal, salary and card payment the bank texts you about. Shortcuts → Automation → <b>+</b> → <b>Message</b> → Message Contains <b>available</b> (the word in every HSBC balance alert; the sender name is not part of the text) → Run Immediately. Add <b>Get Contents of URL</b> with the address below, Method <b>POST</b>, Request Body <b>Form</b>, one field <b>text</b> = Shortcut Input.</div>
       <div class="code" id="s-smsurl">${esc(smsURL())}</div>
       <div><button type="button" class="secondary" id="s-copy3">Copy address</button></div>
     </div>
@@ -977,7 +991,8 @@ async function submitNote(source){
   try{
     const r=await api('expense',{method:'POST',body:{text, by:S.who||'', source}});
     note.value=''; lsSet('draft',null); autosize();
-    if(r.draft){ openExpenseSheet({...r.draft, desc:r.draft.description}); toast("Couldn't find the amount. Fill it in."); }
+    if(r.draft && r.draft.kind==='transfer'){ note.value=text; lsSet('draft',text); autosize(); toast("Couldn't find the amount to move. Add it and send again."); }
+    else if(r.draft){ openExpenseSheet({...r.draft, desc:r.draft.description}); toast("Couldn't find the amount. Fill it in."); }
     else if((r.moves||[]).length && !(r.saved||[]).length){ const m=r.moves[0]; toast(`Moved ${fmtBase(m.usd)} · ${m.desc}`); load(); }
     else{ const saved=r.saved||[]; saved.forEach(addLocal); const total=saved.reduce((a,s)=>a+s.usd,0);
       toast(saved.length===1 ? `Added ${fmtBase(saved[0].usd)} · ${saved[0].desc}` : `Added ${saved.length} expenses · ${fmtBase(total)}`, { undo: async()=>{ for(const s of saved){ try{ await api('expense',{method:'DELETE',body:{id:s.id,month:s.month}}); removeLocal(s.id,s.month); }catch(e){} } toast('Undone'); }, edit: saved.length===1 ? ()=>openExpenseSheet(saved[0]) : null });

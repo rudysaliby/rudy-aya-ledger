@@ -1,6 +1,8 @@
 // Siri Shortcut endpoint: GET or POST /siri?key=…&by=Rudy&text=forty five groceries
-// Replies with one plain sentence Siri can read out.
-import { HttpError, checkAuth, text, getSettings, parseNote, saveExpenses, todayIn, fmt, memberName } from "../lib/ledger.mjs";
+// Replies with one plain sentence Siri can read out. Books exactly like the app: expenses leave cash in hand
+// (or the member's default account), "moved 2000 to cash" is a transfer.
+import { HttpError, checkAuth, text, getSettings, parseNote, todayIn, fmt, memberName } from "../lib/ledger.mjs";
+import { bookItems } from "../lib/book.mjs";
 
 export const config = { path: "/siri" };
 
@@ -22,11 +24,13 @@ export default async (req) => {
     const who = memberName(settings, by) || String(by||'').slice(0,40);
     const today = todayIn(settings.timezone);
     const {items} = await parseNote(settings, note, today);
-    if(items.length===1 && !(items[0].amount>0)) return text(`I heard "${note}" but couldn't find an amount. Try again with the number first.`);
-    const saved = await saveExpenses(settings, items, {by: who, source:'siri'});
-    if(saved.length===1){ const s=saved[0]; const whoTxt = s.by ? ` for ${s.by}` : ''; return text(`Added ${fmt(settings, s.usd)}, ${s.desc}, ${s.tag}${whoTxt}.`); }
-    const total=saved.reduce((a,s)=>a+s.usd,0);
-    return text(`Added ${saved.length} expenses, ${fmt(settings,total)} in total: `+saved.map(s=>`${fmt(settings,s.usd)} ${s.desc}`).join(', ')+'.');
+    const r = await bookItems(settings, items, {by: who, source:'siri', today});
+    if(r.draft) return text(`I heard "${note}" but couldn't find an amount. Try again with the number first.`);
+    const parts=[];
+    for(const m of r.moves) parts.push(`Moved ${fmt(settings, m.usd)}, ${m.desc}.`);
+    if(r.saved.length===1){ const s=r.saved[0]; parts.push(`Added ${fmt(settings, s.usd)}, ${s.desc}, ${s.tag}${s.by?' for '+s.by:''}.`); }
+    else if(r.saved.length>1){ const total=r.saved.reduce((a,s)=>a+s.usd,0); parts.push(`Added ${r.saved.length} expenses, ${fmt(settings,total)} in total: `+r.saved.map(s=>`${fmt(settings,s.usd)} ${s.desc}`).join(', ')+'.'); }
+    return text(parts.join(' ') || 'Nothing to add.');
   }catch(e){
     const status = e instanceof HttpError ? e.status : 500;
     return text(status===401 ? 'The household key in the shortcut is wrong.' : ('Could not save: '+(e.message||'server error')), status);

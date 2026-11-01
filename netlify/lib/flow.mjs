@@ -1,5 +1,5 @@
 // Money flow: movements between accounts, account matching for bank alerts, and expected-vs-actual balances.
-import { HttpError, readJSON, writeJSON, mutateList, getAccounts, getMonth, getIncome, recordSnapshot, toUSD, rate, newId, shiftMonth, memberName, bucketOf, LIABILITY_TYPES } from "./ledger.mjs";
+import { HttpError, readJSON, mutateList, getAccounts, getMonth, getIncome, recordSnapshot, toUSD, rate, newId, shiftMonth, bucketOf } from "./ledger.mjs";
 
 export const MOVE_KINDS = ['transfer','income','refund','adjust'];
 export const FLOW_TYPES = ['cash','bank','savings','card'];   // accounts that take part in the monthly check
@@ -42,11 +42,16 @@ export async function accountOfType(settings, accounts, type, owner, {create=fal
              : type==='cash' ? accounts.filter(a=>a.active!==false && a.type==='cash' && bucketOf(a)==='spending')
              : accounts.filter(a=>a.active!==false && a.type===type);
   const mine=pool.filter(own); if(mine.length) return mine.sort((a,b)=>(a.type==='savings'?0:1)-(b.type==='savings'?0:1))[0];
+  // nothing of their own: a joint one, else the only one, else (for savings) the first
+  const joint=pool.filter(a=>!a.owner || String(a.owner).toLowerCase()==='joint'); if(joint.length) return joint[0];
   const any=pool; if(any.length===1 && !owner) return any[0];
   if(any.length && type==='savings') return any[0];
   if(create && type==='cash'){
-    const now=Date.now(); const doc={ id:newId(), name: owner? `Cash in hand (${owner})` : 'Cash in hand', type:'cash', owner:owner||'Joint', amount:0, currency:currency||settings.base, confirmed:{amount:0, date:new Date(now).toISOString().slice(0,10), ts:now}, active:true, ts:now };
-    await mutateList('accounts', items=>items.concat([doc])); return doc;
+    // the baseline sits one tick before creation so a booking saved in the same millisecond still counts
+    const now=Date.now(); const doc={ id:newId(), name: owner? `Cash in hand (${owner})` : 'Cash in hand', type:'cash', owner:owner||'Joint', amount:0, currency:currency||settings.base, confirmed:{amount:0, date:new Date(now).toISOString().slice(0,10), ts:now-1}, active:true, ts:now };
+    await mutateList('accounts', items=>items.concat([doc]));
+    accounts.push(doc);   // the caller's list stays current, so a second item in the same note reuses this account
+    return doc;
   }
   return null;
 }
@@ -64,7 +69,8 @@ export async function confirmBalance(settings, id, actual, today, extra={}){
   const amt=Math.max(0,Math.round(Number(actual)*100)/100);
   const before=await getAccounts(); const acc=before.find(a=>a.id===id); if(!acc) return null;
   let agree=true;
-  { const rec=await reconcile(settings, before.map(a=>a.id===id? {...a, amount:amt} : a), today); const r=rec[id]; agree = !r || r.gap===0; }
+  // an account with no baseline yet takes this reading as its baseline; otherwise the reading must agree with what is logged
+  if(acc.confirmed){ const rec=await reconcile(settings, before.map(a=>a.id===id? {...a, amount:amt} : a), today); const r=rec[id]; agree = !r || r.gap===0; }
   let updated=null;
   const items=await mutateList('accounts', items=>items.map(a=>{ if(a.id!==id) return a; updated={...a, ...extra, amount:amt, confirmed: agree? {amount:amt, date:today, ts:Date.now()} : a.confirmed, updatedAt:today}; return updated; }));
   await recordSnapshot(settings, items, today);
@@ -81,7 +87,8 @@ export async function withSync(settings, today, ids, fn){
   const result = await fn();
   if(ids.length){
     const post=await reconcile(settings, await getAccounts(), today);
-    const upd=ids.filter(id=>pre[id] && pre[id].gap===0 && post[id] && post[id].gap!==0);
+    // any change in the expected figure moves the balance, even one too small for the gap tolerance (a $1 coffee still leaves the pocket)
+    const upd=ids.filter(id=>pre[id] && pre[id].gap===0 && post[id] && Math.abs(post[id].expected-post[id].actual)>=0.005);
     if(upd.length){
       const now=Date.now();
       // move the balance only; the baseline (last real reading) stays where it is, so later edits of these bookings still count
@@ -113,18 +120,23 @@ const inCur=(settings, usd, cur)=>usd*rate(settings, cur||'USD');
 export async function reconcile(settings, accounts, today, preloaded=null){
   const flow=accounts.filter(a=>a.active!==false && FLOW_TYPES.includes(a.type));
   if(!flow.length) return {};
-  // scan the last six months; per account only what happened after its baseline counts
-  const cm=today.slice(0,7); const keys=[]; for(let i=0;i<6;i++) keys.push(shiftMonth(cm,-i));
-  let expenses, mv;
-  if(preloaded && preloaded.months && preloaded.moves){ expenses=keys.flatMap(k=>preloaded.months[k]||[]); mv=keys.flatMap(k=>preloaded.moves[k]||[]); }
-  else { const [months, moves]=await Promise.all([Promise.all(keys.map(getMonth)), Promise.all(keys.map(getMoves))]); expenses=months.flat(); mv=moves.flat(); }
+  // scan every month back to the oldest baseline (at least six, at most 24, plus next month for forward-dated entries);
+  // per account only what happened after its own baseline counts
+  const cm=today.slice(0,7); let earliest=cm;
+  for(const a of flow){ const d=a.confirmed? String(a.confirmed.date||'') : (a.ts? new Date(a.ts).toISOString().slice(0,10) : ''); const mk=d.slice(0,7); if(/^\d{4}-\d{2}$/.test(mk) && mk<earliest) earliest=mk; }
+  const keys=[shiftMonth(cm,1)]; for(let i=0;i<24;i++){ const k=shiftMonth(cm,-i); if(i>=6 && k<earliest) break; keys.push(k); }
+  const pm=preloaded&&preloaded.months||{}, pv=preloaded&&preloaded.moves||{};
+  const [months, moves]=await Promise.all([Promise.all(keys.map(k=>pm[k]? pm[k] : getMonth(k))), Promise.all(keys.map(k=>pv[k]? pv[k] : getMoves(k)))]);
+  const expenses=months.flat(), mv=moves.flat();
   const out={};
   for(const a of flow){
     const liab=a.type==='card';
     const since=a.confirmed? a.confirmed.ts : (a.ts||null); const base=a.confirmed? a.confirmed.amount : Number(a.amount)||0;
     let exp=base, n=0, flowAbs=0;
-    for(const e of expenses){ if(e.from!==a.id || (since && e.ts<=since)) continue; const v=inCur(settings,e.usd,a.currency); exp+= liab? v : -v; n++; flowAbs+=Math.abs(v); }
-    for(const m of mv){ if(since && m.ts<=since) continue; const v=inCur(settings,m.usd,a.currency);
+    // a booking in the account's own currency counts at face value; only cross-currency ones go through today's rate
+    const val=x=> x.currency===a.currency ? Number(x.amount)||0 : inCur(settings,x.usd,a.currency);
+    for(const e of expenses){ if(e.from!==a.id || (since && e.ts<=since)) continue; const v=val(e); exp+= liab? v : -v; n++; flowAbs+=Math.abs(v); }
+    for(const m of mv){ if(since && m.ts<=since) continue; if(m.toAcc!==a.id && m.fromAcc!==a.id) continue; const v=val(m);
       if(m.toAcc===a.id){ exp+= liab? -v : v; n++; flowAbs+=Math.abs(v); } if(m.fromAcc===a.id){ exp+= liab? v : -v; n++; flowAbs+=Math.abs(v); } }
     const actual=Number(a.amount)||0; let gap=Math.round((actual-exp)*100)/100;
     const tol = 1 + 0.01*flowAbs;   // exchange-rate rounding on converted movements is not a real gap
@@ -137,16 +149,29 @@ export async function reconcile(settings, accounts, today, preloaded=null){
 // ---------- credit-card cycle: statement amount due on the pay day, and charges since the statement ----------
 function nextDay(today, day){ const [y,m,d]=today.split('-').map(Number); const mk=(yy,mm)=>`${yy}-${String(mm).padStart(2,'0')}`; const dd=Math.min(day,28); if(d<=dd) return `${mk(y,m)}-${String(dd).padStart(2,'0')}`; const n=new Date(Date.UTC(y,m,1)); return `${mk(n.getUTCFullYear(),n.getUTCMonth()+1)}-${String(dd).padStart(2,'0')}`; }
 export function lastDay(today, day){ const [y,m,d]=today.split('-').map(Number); const mk=(yy,mm)=>`${yy}-${String(mm).padStart(2,'0')}`; const dd=Math.min(day,28); if(d>=dd) return `${mk(y,m)}-${String(dd).padStart(2,'0')}`; const n=new Date(Date.UTC(y,m-2,1)); return `${mk(n.getUTCFullYear(),n.getUTCMonth()+1)}-${String(dd).padStart(2,'0')}`; }
-/** On the statement day, freeze the card's debt as the next amount due (unless the user typed one for this cycle). */
+/**
+ * Housekeeping on every load: on the statement day freeze the card's debt as the next amount due (unless the user typed
+ * one for this cycle), and give any flow account that still has no baseline one at its current balance.
+ */
 export async function rollStatements(settings, today){
-  const accounts=await getAccounts(); let changed=false;
-  const next=accounts.map(a=>{ if(a.type!=='card' || !a.statementDay) return a; const sd=lastDay(today, Number(a.statementDay)); if(a.statementSnap && a.statementSnap.date===sd) return a; changed=true; return {...a, statementSnap:{date:sd, amount:Number(a.amount)||0}, due:Number(a.amount)||0, dueSetBy:'statement'}; });
-  if(changed) await mutateList('accounts', items=>items.map(a=>{ const n=next.find(x=>x.id===a.id); return n && n!==a ? {...a, statementSnap:n.statementSnap, due:n.due, dueSetBy:n.dueSetBy} : a; }));
-  return changed? next : accounts;
+  const now=Date.now();
+  // what an account needs, computed from the copy at hand; applied inside the etag-checked write so nothing newer is overwritten
+  const patchFor=a=>{
+    const p={};
+    if(FLOW_TYPES.includes(a.type) && !a.confirmed) p.confirmed={amount:Number(a.amount)||0, date:today, ts:now};
+    if(a.type==='card' && a.statementDay){ const sd=lastDay(today, Number(a.statementDay)); if(!(a.statementSnap && a.statementSnap.date===sd)){ p.statementSnap={date:sd, amount:Number(a.amount)||0}; p.due=Number(a.amount)||0; p.dueSetBy='statement'; } }
+    return Object.keys(p).length? p : null;
+  };
+  const accounts=await getAccounts();
+  if(!accounts.some(patchFor)) return accounts;
+  return mutateList('accounts', items=>items.map(a=>{ const p=patchFor(a); return p? {...a, ...p} : a; }));
 }
-/** A payment landed on the card: reduce what is due. */
+/** A payment landed on the card: reduce what is due (a negative amount puts a deleted payment back). */
 export async function applyCardPayment(cardId, amountInCardCur){
-  return mutateList('accounts', items=>items.map(a=> a.id===cardId ? {...a, due: Math.max(0, Math.round(((Number(a.due)||0)-amountInCardCur)*100)/100), lastPayment:{amount:amountInCardCur, ts:Date.now()}} : a));
+  return mutateList('accounts', items=>items.map(a=>{ if(a.id!==cardId) return a;
+    const due=Math.max(0, Math.round(((Number(a.due)||0)-amountInCardCur)*100)/100);
+    const lastPayment = amountInCardCur>0 ? {amount:amountInCardCur, ts:Date.now()} : (a.lastPayment && Math.abs((a.lastPayment.amount||0)+amountInCardCur)<0.01 ? null : a.lastPayment||null);
+    return {...a, due, lastPayment}; }));
 }
 /** Figures for the Wealth tab: due on the next pay day, and charges since the statement. */
 export function cardCycle(card, today){

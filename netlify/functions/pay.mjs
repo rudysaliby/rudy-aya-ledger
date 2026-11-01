@@ -1,7 +1,7 @@
 // Apple Pay hand-off: the iPhone "Transaction" automation posts merchant, amount and card here.
 // GET or POST (form or JSON) /pay?key=…&by=Rudy&merchant=…&amount=…&card=…
 import { HttpError, checkAuth, text, getSettings, getMonth, getAccounts, parseNote, saveExpenses, todayIn, fmt, memberName, guessTag, CURRENCIES } from "../lib/ledger.mjs";
-import { matchCardAcc } from "../lib/flow.mjs";
+import { matchCardAcc, withSync } from "../lib/flow.mjs";
 
 export const config = { path: "/pay" };
 
@@ -15,9 +15,11 @@ function parseMoney(s, fallback){
   else if(/\bLBP\b|L\.L\.?|\bLL\b|ل\.ل/i.test(s)) currency='LBP';
   const m=s.match(/-?\d[\d.,\s]*/); if(!m) return {amount:0, currency:currency||fallback};
   let num=m[0].replace(/\s/g,'');
-  // decide decimal separator: last of . or ,
+  // a comma is the decimal mark only when it is the single comma, comes after any dot and is followed by 1–2 digits
+  // ("84,00" → 84.00, "1.234,56" → 1234.56); otherwise commas group thousands ("1,250" → 1250, "1,500,000" → 1500000)
   const lastDot=num.lastIndexOf('.'), lastComma=num.lastIndexOf(',');
-  if(lastComma>lastDot){ num=num.replace(/\./g,'').replace(',','.'); } else { num=num.replace(/,/g,''); }
+  const commaDecimal = lastComma>lastDot && (num.match(/,/g)||[]).length===1 && /,\d{1,2}$/.test(num);
+  if(commaDecimal){ num=num.replace(/\./g,'').replace(',','.'); } else { num=num.replace(/,/g,''); }
   return {amount: Math.abs(parseFloat(num))||0, currency: currency||fallback};
 }
 
@@ -48,10 +50,13 @@ export default async (req) => {
     let items;
     try{ const r=await parseNote(settings, note, today); items=r.items; }catch(e){ items=null; }
     if(!items||!items.length||!(items[0].amount>0)) items=[{amount:money.amount, currency:money.currency, description: merchant||'Card payment', tag:guessTag(merchant), date:today, by:null, note:null}];
-    // trust the card's own amount and currency over the model's reading
-    const cardAcc=matchCardAcc(await getAccounts(), {last4:null, owner:who});
-    items=[{...items[0], kind:'expense', amount:money.amount, currency:CURRENCIES.includes(money.currency)?money.currency:settings.base, by:items[0].by||null, note: card? 'Apple Pay · '+card : 'Apple Pay', from: cardAcc? cardAcc.id : null, raw: merchant+'|'+money.amount+'|'+money.currency}];
-    const saved=await saveExpenses(settings, items, {by:who, source:'applepay'});
+    // trust the card's own amount and currency over the model's reading; the account is the card named in the pass
+    // (its last digits, if the pass says them, pick a credit card or a debit card's bank), else this member's credit card
+    const accounts=await getAccounts(); const l4=(card.match(/(\d{4})(?!.*\d)/)||[])[1]||null;
+    const byL4 = l4 ? accounts.find(a=>a.active!==false && (a.type==='card'||a.type==='bank') && String(a.last4||'')===l4) : null;
+    const acc = byL4 || matchCardAcc(accounts, {last4:null, owner:who});
+    items=[{...items[0], kind:'expense', amount:money.amount, currency:CURRENCIES.includes(money.currency)?money.currency:settings.base, by:items[0].by||null, note: card? 'Apple Pay · '+card : 'Apple Pay', from: acc? acc.id : null, raw: merchant+'|'+money.amount+'|'+money.currency}];
+    const saved=await withSync(settings, today, [acc? acc.id : null], ()=>saveExpenses(settings, items, {by:who, source:'applepay'}));
     const s=saved[0];
     console.log('[pay]', JSON.stringify({merchant, amount:money.amount, currency:money.currency, desc:s.desc, tag:s.tag}));
     return text(`Added ${fmt(settings, s.usd)}, ${s.desc}, ${s.tag}${s.by?' for '+s.by:''}.`);

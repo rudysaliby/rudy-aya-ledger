@@ -65,24 +65,6 @@ export function netWorth(settings, accounts){
   for(const a of accounts){ if(a.active===false) continue; const v=accountUSD(settings,a); if(LIABILITY_TYPES.includes(a.type)) debts+=v; else assets+=v; }
   return {assets, debts, net: assets-debts};
 }
-/** Find the credit-card account an alert refers to: by last digits, else the owner's only card, else the only card. */
-export function matchCard(accounts, {last4, owner}){
-  const cards=accounts.filter(a=>a.type==='card' && a.active!==false);
-  if(!cards.length) return null;
-  if(last4){ const c=cards.find(a=>String(a.last4||'')===String(last4)); if(c) return c; }
-  if(owner){ const mine=cards.filter(a=>String(a.owner||'').toLowerCase()===String(owner).toLowerCase()); if(mine.length===1) return mine[0]; }
-  return cards.length===1 ? cards[0] : null;
-}
-/** Apply an available-balance reading to a card: debt = limit − available. Returns the updated account list or null. */
-export async function applyAvailable(settings, {last4, owner, available, currency, today}){
-  const accounts=await getAccounts(); const card=matchCard(accounts,{last4, owner}); if(!card) return null;
-  const limit=Number(card.limit)||0; if(!(limit>0)) return null;
-  if(currency && card.currency && currency!==card.currency) return null; // a different card's currency: leave it alone
-  const avail=Math.max(0, Math.min(limit, Number(available)||0)); const debt=Math.round((limit-avail)*100)/100;
-  const items=await mutateList('accounts', items=>items.map(a=> a.id===card.id ? {...a, available:avail, amount:debt, updatedAt:today} : a));
-  await recordSnapshot(settings, items, today);
-  return {card:{...card, available:avail, amount:debt}, accounts:items};
-}
 /** Keep one net-worth point per day so the Wealth tab can draw a history line. */
 export async function recordSnapshot(settings, accounts, today){
   const {assets,debts}=netWorth(settings, accounts);
@@ -131,6 +113,7 @@ export function memberName(settings, name){ if(!name) return null; const i=(sett
 
 // ---------- fallback parser (no Claude needed) ----------
 const NUMWORDS = {zero:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19,twenty:20,thirty:30,forty:40,fifty:50,sixty:60,seventy:70,eighty:80,ninety:90,hundred:100,thousand:1000,million:1000000};
+const reEsc=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 function wordsToNumber(str){ const toks=str.toLowerCase().replace(/-/g,' ').split(/\s+/).filter(Boolean); let total=0,cur=0,found=false; for(const t of toks){ const v=NUMWORDS[t]; if(v==null){ if(t==='and') continue; if(found) break; else continue; } found=true; if(v===100){ cur=(cur||1)*100; } else if(v>=1000){ total+=(cur||1)*v; cur=0; } else cur+=v; } return found? total+cur : null; }
 export function guessTag(t){ t=String(t).toLowerCase(); let best='Other',score=0; for(const [tag,words] of Object.entries(TAG_WORDS)){ for(const w of words){ if(t.includes(w) && w.length>score){ best=tag; score=w.length; } } } return best; }
 export function parseLocal(settings, text, today){
@@ -140,18 +123,19 @@ export function parseLocal(settings, text, today){
   else if(/\$|\b(usd|dollars?|bucks|دولار)\b/.test(t)) currency='USD';
   else if(/€|\b(eur|euros?)\b/.test(t)) currency='EUR';
   else if(/\b(aed|dirhams?|درهم)\b/.test(t)) currency='AED';
-  let amount=null; const m=t.match(/(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)?/);
+  // the multiplier must be a whole word: "12 meals" is 12, not 12 million; "45 kids" is 45, not 45k
+  let amount=null; const m=t.match(/(\d[\d,]*(?:\.\d+)?)(?:\s*(k|m|thousand|million)\b)?/);
   if(m){ amount=parseFloat(m[1].replace(/,/g,'')); const mult=m[2]; if(mult==='k'||mult==='thousand') amount*=1000; if(mult==='m'||mult==='million') amount*=1e6; }
   else { const w=wordsToNumber(t); if(w!=null) amount=w; }
-  let desc=raw.replace(/\$|€/g,'').replace(/\b\d[\d,]*(?:\.\d+)?\s*(k|m|thousand|million)?\b/ig,' ').replace(/\b(lira|lbp|l\.l\.?|ll|usd|dollars?|bucks|eur|euros?)\b/ig,' ');
+  let desc=raw.replace(/\$|€/g,'').replace(/\b\d[\d,]*(?:\.\d+)?(?:\s*(k|m|thousand|million)\b)?/ig,' ').replace(/\b(lira|lbp|l\.l\.?|ll|usd|dollars?|bucks|eur|euros?|aed|dirhams?)\b/ig,' ');
   Object.keys(NUMWORDS).forEach(w=>{ desc=desc.replace(new RegExp('\\b'+w+'\\b','ig'),' '); });
   desc=desc.replace(/\b(for|on|at|of|spent|paid|bought|and|the|a|an|add|expense|expenses|to|my)\b/ig,' ').replace(/\s+/g,' ').trim();
-  let by=null; for(const mname of (settings.members||[])){ if(new RegExp('\\b'+mname.toLowerCase()+'\\b').test(t)){ by=mname; desc=desc.replace(new RegExp('\\b'+mname+'\\b','ig'),' ').replace(/\s+/g,' ').trim(); } }
+  let by=null; for(const mname of (settings.members||[])){ const re=new RegExp('\\b'+reEsc(mname)+'\\b','i'); if(re.test(t)){ by=mname; desc=desc.replace(new RegExp('\\b'+reEsc(mname)+'\\b','ig'),' ').replace(/\s+/g,' ').trim(); } }
   let date=today; if(/\byesterday\b/.test(t)){ const d=new Date(today+'T12:00:00Z'); d.setUTCDate(d.getUTCDate()-1); date=d.toISOString().slice(0,10); desc=desc.replace(/yesterday/ig,'').trim(); }
   const tag=guessTag(t);
   desc=desc? desc.charAt(0).toUpperCase()+desc.slice(1) : tag;
-  // a transfer between the household's own accounts
-  if(/\b(moved|move|transfer(?:red)?|withdrew|withdraw|withdrawal|deposit(?:ed)?|paid (?:the |my )?(?:credit )?card|card payment|to savings|aside|vault|long[- ]term|permanent savings)\b/.test(t)){
+  // a transfer between the household's own accounts ("transfer fee 5" is still an expense)
+  if(/\b(moved|move|transfer(?:red)?|withdrew|withdraw|withdrawal|deposit(?:ed)?|paid (?:the |my )?(?:credit )?card|card payment|to savings|aside|vault|long[- ]term|permanent savings)\b/.test(t) && !/\b(fees?|charges?|commission)\b/.test(t)){
     const pick=w=>/\b(savings?|vault|permanent|long|aside)\b/.test(w)?'savings':/\bcard\b/.test(w)?'card':/\bcash\b/.test(w)?'cash':/\bbank|account\b/.test(w)?'bank':null;
     let from=null, to=null; const mFrom=t.match(/\bfrom\s+(?:the |my )?(\w+)/), mTo=t.match(/\b(?:to|into)\s+(?:the |my )?(\w+)/);
     if(mFrom) from=pick(mFrom[1]); if(mTo) to=pick(mTo[1]);
@@ -240,12 +224,12 @@ export function analysisPrompt(settings, mk, st, m1, m2, recurring, today, incom
   const big=[...st.items].sort((a,b)=>b.usd-a.usd).slice(0,8).map(e=>`${e.date.slice(5)} ${e.desc} (${e.tag}, ${e.by||'?'}) ${usd(e.usd)}`).join('; ')||'none';
   const recs=recurring.filter(r=>r.active!==false).map(r=>{ const u=toUSD(settings,r.amount,r.currency); return `${r.name} [${r.kind||'other'}] ${usd(r.period==='yearly'?u/12:u)}/mo${r.period==='yearly'?' (billed yearly)':''}`; }).join('; ')||'none';
   const budget=Number(settings.budget)? `Monthly budget: ${usd(toUSD(settings, settings.budget, settings.base))}.` : 'No budget set.';
-  const projected = st.elapsed? st.total/st.elapsed*st.dim : st.total;
+  const projected = st.elapsed>=3? st.total/st.elapsed*st.dim : st.total;   // before day 3 a projection says nothing
   const incomeLine = incomeUSD>0 ? `Household income: ${usd(incomeUSD)} per month. Projected left over this month after day-to-day and fixed costs: ${usd(incomeUSD-projected-st.fixed)} (${Math.round((incomeUSD-projected-st.fixed)/incomeUSD*100)}% of income).` : 'Income not recorded.';
   const label=monthLabel;
   return {
     system: coachSystem(settings),
-    user: `Month in view: ${label(mk)}, ${st.elapsed} of ${st.dim} days elapsed. Day-to-day total ${usd(st.total)} across ${st.count} items, daily average ${st.elapsed? usd(st.total/st.elapsed):0}, projected month-end day-to-day ${st.elapsed? usd(st.total/st.elapsed*st.dim):0}.
+    user: `Month in view: ${label(mk)}, ${st.elapsed} of ${st.dim} days elapsed. Day-to-day total ${usd(st.total)} across ${st.count} items, daily average ${st.elapsed? usd(st.total/st.elapsed):0}, projected month-end day-to-day ${usd(projected)}${st.elapsed<3? ' (too early in the month to project; treat it as the total so far)':''}.
 By category: ${tagLine(st)}. By person: ${perLine(st)}.
 Largest items: ${big}.
 Previous month (${label(shiftMonth(mk,-1))}, full): total ${usd(m1.total)}; by category: ${tagLine(m1)}; by person: ${perLine(m1)}.

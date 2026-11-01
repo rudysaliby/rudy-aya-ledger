@@ -40,7 +40,7 @@ function readAlertLocal(sms, today){
   else if(/ATM|cash withdrawal/i.test(sms)) kind='withdrawal';
   else if(/payment (?:to|received on) .*credit card|credit card payment/i.test(sms)) kind='card_payment';
   else if(sign==='+' || /payment to \d{3}-\d{3}|credited|salary/i.test(sms)) kind='credit_in';
-  else if(/has been used for|purchase from/i.test(sms) || sign==='-') kind='purchase';
+  else if(/has been used for|was used for|used for|purchase from|purchase of|spent/i.test(sms) || sign==='-') kind='purchase';
   else if(/fee|interest|charge/i.test(sms)) kind='fee';
   const at=sms.match(/\bat\s+([A-Z0-9][^.\n]{1,40}?)(?=\.\s|\.$|\s+on\b)/i); if(at) merchant=at[1].trim();
   else { const pf=sms.match(/\d{2}:\d{2}:\d{2}\s+(.+?)\s+Purchase from/i); if(pf) merchant=pf[1].trim(); }
@@ -108,7 +108,9 @@ export default async (req) => {
     } else if(dup) headline='Already logged.';
     // any stated available balance / limit sets the account's actual balance
     if(acc && a.available!=null && Number(a.available)>=0){
-      try{ const r=await applyReading(settings, acc, Number(a.available), a.available_currency||null, today); if(r) notes.push(acc.type==='card'? `Card debt now ${fmtAmount(r.account.amount, acc.currency)}.` : `${acc.name} balance now ${fmtAmount(r.account.amount, acc.currency)}.`); }catch(e){}
+      if(acc.type==='card' && !(Number(acc.limit)>0)) notes.push(`Set the credit limit on ${acc.name} in Wealth so alerts can update its debt.`);
+      else if(a.available_currency && acc.currency && a.available_currency!==acc.currency) notes.push(`Reading in ${a.available_currency} ignored: ${acc.name} is in ${acc.currency}.`);
+      else { try{ const r=await applyReading(settings, acc, Number(a.available), a.available_currency||null, today); if(r) notes.push(acc.type==='card'? `Card debt now ${fmtAmount(r.account.amount, acc.currency)}.` : `${acc.name} balance now ${fmtAmount(r.account.amount, acc.currency)}.`); }catch(e){} }
     } else if(!acc && a.available!=null){ notes.push(isCard? 'No credit-card account matched this alert; add one in Wealth with the card\'s last digits.' : 'No bank account matched this alert; add one in Wealth with the account number mask.'); }
     const reply=(headline||'Nothing to add.')+(notes.length?' '+notes.join(' '):'');
     console.log('[sms]', JSON.stringify({kind:a.kind, amount, currency, account: acc? acc.name : null, isCard, available:a.available, dup, reply}));
