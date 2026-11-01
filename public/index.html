@@ -286,7 +286,7 @@ nav.tabs button.on{color:#fff;background:linear-gradient(135deg,var(--a1),var(--
     <div class="capture">
       <textarea id="note" rows="1" placeholder="45 groceries at Spinneys" enterkeyhint="send" autocomplete="off" autocapitalize="sentences"></textarea>
       <div class="capture-foot">
-        <span class="hint" id="hint">Type the amount and what it was for, or say "Hey Siri, add to my expenses". "Moved 2000 to cash" records a transfer.</span>
+        <span class="hint" id="hint">Type the amount and what it was for, or say "Hey Siri, add to my expenses". "Moved 2000 to cash" or "put 1000 aside" records a transfer.</span>
         <button class="primary" id="addBtn">Add</button>
       </div>
     </div>
@@ -321,8 +321,10 @@ nav.tabs button.on{color:#fff;background:linear-gradient(135deg,var(--a1),var(--
     <div class="row-between"><h2>Move money</h2><button class="link" id="transferBtn">↔ Transfer</button></div>
     <div class="card"><h2 style="margin-bottom:10px">By person</h2><div class="split" id="nwSplit"></div><div class="legend" id="nwLegend" style="margin-top:8px"></div></div>
     <div class="card hide" id="nwChartCard"><div class="row-between" style="margin-bottom:6px"><h2>Over time</h2><span class="muted" style="font-size:12px" id="nwChartSub"></span></div><div class="chart" id="nwChart"></div><div class="legend" id="nwChartLegend" style="margin-top:8px"></div></div>
-    <div class="row-between"><h2>Assets</h2><button class="link" id="addAccBtn">+ Add</button></div>
+    <div class="row-between"><h2>Everyday money</h2><button class="link" id="addAccBtn">+ Add</button></div>
     <ul class="list" id="assetList"></ul>
+    <div class="row-between"><h2>Long-term savings</h2><button class="link" id="addSavedBtn">+ Add</button></div>
+    <ul class="list" id="savedList"></ul>
     <div class="row-between"><h2>Debts</h2><button class="link" id="addDebtBtn">+ Add debt</button></div>
     <ul class="list" id="debtList"></ul>
   </section>
@@ -410,6 +412,7 @@ function accountUSD(a){ if(a.type==='gold'){ const g=Number(a.grams)||0, pr=Numb
 function owners(){ return [...(S.settings.members||[]), ...(S.settings.people||[]), 'Joint']; }
 function ownerColor(o){ const i=owners().indexOf(o); return i>=0? PCOL[i%PCOL.length] : 'var(--faint)'; }
 function accType(t){ return ACC_TYPES.find(x=>x[0]===t)||ACC_TYPES[1]; }
+function bucketOf(a){ if(a.bucket==='saved'||a.bucket==='spending') return a.bucket; return ['savings','investment','gold'].includes(a.type)? 'saved' : 'spending'; }
 function accById(id){ return id? S.accounts.find(a=>a.id===id) : null; }
 function srcChip(e){ const a=accById(e.from); if(!a) return ''; const lbl = a.type==='card'? ('card'+(a.last4?' ··'+a.last4:'')) : a.type==='cash'? 'cash' : a.type==='savings'? 'savings' : 'bank'; return `<span class="src">${accType(a.type)[2]} ${esc(lbl)}</span>`; }
 function moveRowHTML(m){ const f=accById(m.fromAcc), t=accById(m.toAcc); const icon = m.kind==='income'?'⬇️':m.kind==='refund'?'↩️':m.kind==='adjust'?'⚖️':'↔️';
@@ -538,15 +541,17 @@ function renderPlan(){
 function renderWealth(){
   const acc=S.accounts.filter(a=>a.active!==false); const assets=acc.filter(a=>!LIAB.includes(a.type)), debts=acc.filter(a=>LIAB.includes(a.type));
   const sumA=assets.reduce((t,a)=>t+accountUSD(a),0), sumD=debts.reduce((t,a)=>t+accountUSD(a),0), net=sumA-sumD;
-  const liquid=assets.filter(a=>['cash','bank','savings'].includes(a.type)).reduce((t,a)=>t+accountUSD(a),0);
+  const everyday=assets.filter(a=>bucketOf(a)==='spending'); const saved=assets.filter(a=>bucketOf(a)==='saved');
+  const liquid=everyday.filter(a=>['cash','bank','savings'].includes(a.type)).reduce((t,a)=>t+accountUSD(a),0); const savedUSD=saved.reduce((t,a)=>t+accountUSD(a),0);
+  const savedThisMonth = S.check && S.check.month===monthKey(new Date()) ? (S.check.savedUSD||0) : 0;
   const gold=assets.filter(a=>a.type==='gold'); const grams=gold.reduce((t,a)=>t+(Number(a.grams)||0),0); const goldUSD=gold.reduce((t,a)=>t+accountUSD(a),0);
   $('nwTotal').textContent=fmtBase(Math.round(net)); $('nwTotal').style.color = net<0? '#ffb4b4' : '#fff';
   $('nwSub').innerHTML = `<span>Assets <b>${fmtShort(sumA)}</b></span><span>Debts <b>${fmtShort(sumD)}</b></span>${grams? `<span>Gold <b>${grams.toLocaleString()} g</b>${goldUSD? ' · '+fmtShort(goldUSD):''}</span>`:''}`;
   const cm=monthKey(new Date()); const st=monthStats(cm); const spend = (st.elapsed? st.total/st.elapsed*st.dim : st.total) + st.fixed; const runway = spend>0? liquid/spend : null;
   const pts=S.networth||[]; const prev = pts.length>=2 ? pts.find(p=>p.date<=shiftMonthDate(30)) || pts[0] : null; const prevNet = prev? prev.assets-prev.debts : null;
   $('nwTiles').innerHTML = `
-    <div class="tile"><span class="k">Liquid savings</span><span class="v">${esc(fmtBase(Math.round(liquid)))}</span><span class="d">cash, bank &amp; savings</span></div>
-    <div class="tile"><span class="k">Runway</span><span class="v">${runway==null? '—' : runway>=24? '2y+' : runway.toFixed(1)+' mo'}</span><span class="d">${spend>0? 'at '+esc(fmtShort(spend))+' a month all-in' : 'log spending first'}</span></div>
+    <div class="tile"><span class="k">Everyday money</span><span class="v">${esc(fmtBase(Math.round(liquid)))}</span><span class="d">bank &amp; pocket cash${runway!=null? ' · '+(runway>=24?'2y+':runway.toFixed(1)+' mo')+' of spending':''}</span></div>
+    <div class="tile"><span class="k">Long-term savings</span><span class="v" style="color:var(--good)">${esc(fmtBase(Math.round(savedUSD)))}</span><span class="d">${savedThisMonth? '+'+esc(fmtShort(savedThisMonth))+' put aside this month' : 'not touched'}</span></div>
     ${(()=>{ const cards=debts.filter(a=>a.type==='card' && S.cycles[a.id] && S.cycles[a.id].payDay); if(!cards.length) return `<div class="tile"><span class="k">Debt ratio</span><span class="v">${sumA>0? Math.round(sumD/sumA*100)+'%' : '—'}</span><span class="d">debts vs assets</span></div>`; const dueUSD=cards.reduce((t,a)=>t+S.cycles[a.id].due/rate(a.currency),0); const first=cards.map(a=>S.cycles[a.id].nextPayDate).sort()[0]; return `<div class="tile"><span class="k">Card payment due</span><span class="v" style="color:var(--warn)">${esc(fmtBase(Math.round(dueUSD)))}</span><span class="d">${esc(dayLabel(first))}${cards.length>1?' · '+cards.length+' cards':''}</span></div>`; })()}
     <div class="tile"><span class="k">30-day change</span><span class="v" style="color:${prevNet==null?'inherit':net-prevNet>=0?'var(--good)':'var(--bad)'}">${prevNet==null? '—' : (net-prevNet>=0?'+':'−')+esc(fmtShort(Math.abs(net-prevNet)))}</span><span class="d">${prevNet==null? 'needs a month of history' : 'in net worth'}</span></div>`;
   // by person (net per owner)
@@ -556,8 +561,8 @@ function renderWealth(){
   $('nwLegend').innerHTML = names.length? names.map(o=>`<span><i class="dot" style="background:${ownerColor(o)};margin-right:5px"></i>${esc(o)} <b class="num">${esc(fmtBase(Math.round(byO[o])))}</b></span>`).join('') : '<span class="faint">Add accounts to see who holds what.</span>';
   // chart
   const card=$('nwChartCard'); if(pts.length>=2){ card.classList.remove('hide'); const box=$('nwChart'); const f=chartFrame(box,170,44,14,16,24); const labels=pts.map(p=>p.date.slice(5).replace('-','/'));
-    lineChart(box, f, [{name:'Net worth',color:'var(--p3)',values:pts.map(p=>p.assets-p.debts)},{name:'Debts',color:'var(--p2)',values:pts.map(p=>p.debts),dashed:true}], labels, {aria:'Net worth over time', maxXLabels:5, tipTitle:i=>pts[i].date});
-    $('nwChartSub').textContent = pts.length+' updates'; $('nwChartLegend').innerHTML='<span><i class="sw" style="background:var(--p3)"></i>Net worth</span><span><i class="sw" style="background:var(--p2)"></i>Debts (dashed)</span>'; }
+    const hasSaved=pts.some(p=>p.saved!=null); lineChart(box, f, [{name:'Net worth',color:'var(--p3)',values:pts.map(p=>p.assets-p.debts)}, ...(hasSaved? [{name:'Long-term savings',color:'var(--p4)',values:pts.map(p=>p.saved!=null? p.saved : null),dashed:true}] : [{name:'Debts',color:'var(--p2)',values:pts.map(p=>p.debts),dashed:true}])], labels, {aria:'Net worth over time', maxXLabels:5, tipTitle:i=>pts[i].date});
+    $('nwChartSub').textContent = pts.length+' updates'; $('nwChartLegend').innerHTML='<span><i class="sw" style="background:var(--p3)"></i>Net worth</span>'+(hasSaved? '<span><i class="sw" style="background:var(--p4)"></i>Long-term savings (dashed)</span>' : '<span><i class="sw" style="background:var(--p2)"></i>Debts (dashed)</span>'); }
   else card.classList.add('hide');
   // accounts whose reading disagrees with what is logged
   const gaps=acc.filter(a=>S.recon[a.id] && S.recon[a.id].gap);
@@ -569,7 +574,8 @@ function renderWealth(){
     return `<li class="tap" data-acc="${esc(a.id)}"><span class="tagdot" aria-hidden="true">${t[2]}</span><div class="main"><div class="desc">${esc(a.name)} ${gapChip}</div><div class="meta"><i class="dot" style="background:${ownerColor(a.owner||'Joint')};margin-right:4px"></i>${esc(a.owner||'Joint')} · ${esc(t[1])}${goldMeta?' · '+esc(goldMeta):''}${a.mask?' · '+esc(a.mask):''}${a.note?' · '+esc(a.note):''}</div></div><div class="amt ${liab?'neg':'pos'}">${liab?'−':''}${esc(fmtBase(Math.round(v)))}${orig}</div></li>`; };
   const al=$('assetList'), dl=$('debtList');
   if(!S.loaded){ al.innerHTML='<li class="empty">Loading…</li>'; dl.innerHTML=''; return; }
-  al.innerHTML = assets.length? [...assets].sort((a,b)=>accountUSD(b)-accountUSD(a)).map(row).join('') : '<li class="empty"><b>No accounts yet.</b><br>Add bank balances, savings, investments and gold for Rudy, Aya, Noah or jointly.</li>';
+  al.innerHTML = everyday.length? [...everyday].sort((a,b)=>accountUSD(b)-accountUSD(a)).map(row).join('') : '<li class="empty"><b>No everyday accounts yet.</b><br>Add the bank account and pocket cash that spending flows through.</li>';
+  const sl=$('savedList'); sl.innerHTML = saved.length? [...saved].sort((a,b)=>accountUSD(b)-accountUSD(a)).map(row).join('') : '<li class="empty"><b>No long-term savings yet.</b><br>The vault cash, gold and anything else you do not touch. Move money here with ↔ Transfer or "put 1000 aside".</li>';
   dl.innerHTML = debts.length? [...debts].sort((a,b)=>accountUSD(b)-accountUSD(a)).map(row).join('') : '<li class="empty">No debts recorded. Loans and credit-card balances go here.</li>';
 }
 function shiftMonthDate(days){ const d=new Date(); d.setDate(d.getDate()-days); return dateKey(d); }
@@ -647,6 +653,7 @@ function renderInsights(){
       <div class="line"><span>Day-to-day spending</span><b>−${esc(fmtBase(Math.round(c.spentUSD)))}</b></div>
       <div class="line"><span>Fixed costs</span><b>−${esc(fmtBase(Math.round(st.fixed)))}</b></div>
       ${c.refundsUSD? `<div class="line"><span>Refunds</span><b>+${esc(fmtBase(Math.round(c.refundsUSD)))}</b></div>`:''}
+      ${c.savedUSD? `<div class="line"><span>Moved to long-term savings</span><b style="color:var(--good)">${esc(fmtBase(Math.round(c.savedUSD)))}</b></div>`:''}
       <div class="line total"><span>Should have ${expected>=0?'grown':'shrunk'} by</span><b>${esc(fmtBase(Math.round(Math.abs(expected))))}</b></div>
       ${c.actualDelta==null? `<div class="unexp">Balances have ${esc(c.startDate? 'no reading before '+monthShort(mk) : 'no history yet')}; the check compares from next month.</div>` : `<div class="line"><span>Balances actually moved</span><b>${c.actualDelta>=0?'+':'−'}${esc(fmtBase(Math.round(Math.abs(c.actualDelta))))}</b></div>
       <div class="unexp ${Math.abs(unexp)<Math.max(20,0.02*allIn)?'ok':''}">${Math.abs(unexp)<Math.max(20,0.02*allIn)? 'Everything lines up.' : (unexp<0? esc(fmtBase(Math.abs(unexp)))+' left your accounts without being logged.' : esc(fmtBase(unexp))+' arrived that is not logged as income.')}${gapsN? ' '+gapsN+' account'+(gapsN>1?'s':'')+' need a look in Wealth.' : ''}</div>`}`; }
@@ -822,13 +829,14 @@ function openIncomeSheet(r){
       $('i-save').disabled=true; try{ const d=await api('income',{method:'POST',body:{item}}); S.income=d.income||S.income; closeSheet(); toast('Saved '+name); render(); }catch(err){ toast(errMsg(err)); $('i-save').disabled=false; } };
   });
 }
-function openAccountSheet(a, debtDefault){
-  const isNew=!a; a=a||{name:'',type:debtDefault?'loan':'bank',owner:S.who||'Joint',amount:'',currency:S.settings.base,grams:'',note:'',active:true};
+function openAccountSheet(a, debtDefault, savedDefault){
+  const isNew=!a; a=a||{name:'',type:debtDefault?'loan':(savedDefault?'cash':'bank'),owner:S.who||'Joint',amount:'',currency:S.settings.base,grams:'',note:'',active:true, bucket: savedDefault? 'saved' : null};
   const types = ACC_TYPES.map(t=>t[1]); const cur=accType(a.type)[1];
   openSheet(`<div class="grab"></div><h3>${isNew? (debtDefault?'New debt':'New account') : 'Edit'}</h3><div class="form">
     <div class="field"><label for="a-name">Name</label><input id="a-name" value="${esc(a.name)}" placeholder="BLOM savings, Gold coins, Car loan…"></div>
     <div class="field"><label>Type</label><div class="chips" id="a-types">${ACC_TYPES.map(t=>`<button type="button" class="chip ${t[1]===cur?'on':''}" data-chip="type" data-val="${esc(t[1])}">${t[2]} ${esc(t[1])}</button>`).join('')}</div></div>
     <div class="field"><label>Whose</label><div class="chips">${owners().map(o=>`<button type="button" class="chip ${o===(a.owner||'Joint')?'on':''}" data-chip="owner" data-val="${esc(o)}"><i class="dot" style="background:${ownerColor(o)}"></i>${esc(o)}</button>`).join('')}</div></div>
+    <div class="field" id="a-bucketf"><label>Which pot</label><div class="seg" id="a-bucket"><button type="button" class="${bucketOf(a)==='spending'?'on':''}" data-b="spending">Everyday money</button><button type="button" class="${bucketOf(a)==='saved'?'on':''}" data-b="saved">Long-term savings</button></div><span class="help">Everyday: spending flows through it (bank, pocket cash). Long-term: the vault, gold, anything you do not touch.</span></div>
     <div class="grid2" id="a-money"><div class="field"><label for="a-amount" id="a-amount-l">Balance</label><input class="num" id="a-amount" type="number" inputmode="decimal" step="any" value="${esc(a.amount)}" placeholder="0"></div>
     <div class="field"><label for="a-cur">Currency</label><select id="a-cur">${CURRENCIES.map(c=>`<option ${c===a.currency?'selected':''}>${c}</option>`).join('')}</select></div></div>
     <div class="grid2 hide" id="a-cardf"><div class="field"><label for="a-limit">Credit limit</label><input class="num" id="a-limit" type="number" inputmode="decimal" step="any" value="${esc(a.limit||'')}" placeholder="31800"></div>
@@ -847,6 +855,8 @@ function openAccountSheet(a, debtDefault){
     const sync=()=>{ const t=(ACC_TYPES.find(x=>x[1]===chipVal(root,'type'))||ACC_TYPES[1])[0]; const gold=t==='gold', card=t==='card', bank=t==='bank'; $('a-goldf').classList.toggle('hide',!gold); $('a-cardf').classList.toggle('hide',!card); $('a-cyclef').classList.toggle('hide',!card); $('a-duef').classList.toggle('hide',!card); $('a-last4f').classList.toggle('hide',!(card||bank)); $('a-maskf').classList.toggle('hide',!bank); $('a-last4-l').textContent = bank? 'Debit card ending (last 4 digits)' : 'Card ending (last 4 digits)'; $('a-money').classList.toggle('hide',gold && Number(S.settings.goldPrice)>0); $('a-amount-l').textContent = card? 'Amount owed (auto when limit and available are set)' : LIAB.includes(t)? 'Amount owed' : (gold? 'Value (if no gold price set)' : 'Balance'); const pr=Number(S.settings.goldPrice)||0; $('a-goldhelp').textContent = pr? `Valued at ${fmtAmt(pr,'USD')} per gram (change it in Settings).` : 'Set a gold price per gram in Settings to value it automatically, or enter the value below.';
       if(card){ const lim=Number($('a-limit').value)||0, av=$('a-avail').value===''? null : Number($('a-avail').value); if(lim>0 && av!=null){ $('a-amount').value=Math.round((lim-Math.min(lim,av))*100)/100; } $('a-cardhelp').textContent='Bank alerts that mention the available balance update the debt automatically (limit − available).'; } };
     root.querySelectorAll('[data-chip="type"]').forEach(b=>b.addEventListener('click',sync)); $('a-limit').addEventListener('input',sync); $('a-avail').addEventListener('input',sync); sync();
+    let bucket=bucketOf(a); root.querySelectorAll('#a-bucket button').forEach(b=>b.onclick=()=>{ bucket=b.dataset.b; root.querySelectorAll('#a-bucket button').forEach(x=>x.classList.toggle('on',x===b)); });
+    const syncBucket=()=>{ const t=(ACC_TYPES.find(x=>x[1]===chipVal(root,'type'))||ACC_TYPES[1])[0]; $('a-bucketf').classList.toggle('hide', LIAB.includes(t)); }; root.querySelectorAll('[data-chip="type"]').forEach(b=>b.addEventListener('click',syncBucket)); syncBucket();
     if(isNew) setTimeout(()=>$('a-name').focus(),300);
     const rc=S.recon[a.id]; if(!isNew && rc){ const liab=a.type==='card'; const out = liab? rc.gap>0 : rc.gap<0;
       $('a-recon').innerHTML = rc.gap? `Expected ${esc(fmtAmt(rc.expected,a.currency))} from what is logged${rc.since?' since '+esc(rc.since):''}; the ${liab?'card says you owe':'balance is'} ${esc(fmtAmt(rc.actual,a.currency))}. <b>${esc(fmtAmt(Math.abs(rc.gap),a.currency))} ${out?'left this account without being logged':'more than expected'}.</b> Type the balance above whenever you check it; then explain any gap here.` : (rc.confirmed? `Matches what is logged (checked ${esc(rc.since||'')}). Type a new balance above whenever you check the account.` : 'Type the balance above to start tracking it.');
@@ -856,7 +866,7 @@ function openAccountSheet(a, debtDefault){
     $('a-cancel').onclick=closeSheet;
     if(!isNew) $('a-del').onclick=async()=>{ if($('a-del').dataset.arm){ try{ const d=await api('account',{method:'DELETE',body:{id:a.id}}); S.accounts=d.accounts||[]; S.networth=d.networth||S.networth; closeSheet(); toast('Deleted'); render(); }catch(err){ toast(errMsg(err)); } } else { $('a-del').dataset.arm='1'; $('a-del').textContent='Tap again to delete'; } };
     $('a-save').onclick=async()=>{ const name=$('a-name').value.trim(); if(!name){ $('a-name').focus(); return; } const t=(ACC_TYPES.find(x=>x[1]===chipVal(root,'type'))||ACC_TYPES[1])[0];
-      const item={ id:a.id, name, type:t, owner:chipVal(root,'owner')||'Joint', amount:Number($('a-amount').value)||0, currency:$('a-cur').value, grams: t==='gold'? Number($('a-grams').value)||0 : null, limit: t==='card'? Number($('a-limit').value)||null : null, available: t==='card' && $('a-avail').value!==''? Number($('a-avail').value) : null, last4: (t==='card'||t==='bank')? $('a-last4').value.replace(/\D/g,'').slice(-4)||null : null, mask: t==='bank'? $('a-mask').value.trim()||null : null, payDay: t==='card'? Number($('a-payday').value)||null : null, statementDay: t==='card'? Number($('a-stday').value)||null : null, due: t==='card' && $('a-due').value!==''? Number($('a-due').value) : null, note:$('a-note').value.trim()||null, active:true, ts:a.ts };
+      const item={ id:a.id, name, type:t, owner:chipVal(root,'owner')||'Joint', amount:Number($('a-amount').value)||0, currency:$('a-cur').value, grams: t==='gold'? Number($('a-grams').value)||0 : null, limit: t==='card'? Number($('a-limit').value)||null : null, available: t==='card' && $('a-avail').value!==''? Number($('a-avail').value) : null, last4: (t==='card'||t==='bank')? $('a-last4').value.replace(/\D/g,'').slice(-4)||null : null, mask: t==='bank'? $('a-mask').value.trim()||null : null, bucket, payDay: t==='card'? Number($('a-payday').value)||null : null, statementDay: t==='card'? Number($('a-stday').value)||null : null, due: t==='card' && $('a-due').value!==''? Number($('a-due').value) : null, note:$('a-note').value.trim()||null, active:true, ts:a.ts };
       if(t!=='gold' && !(item.amount>=0)){ $('a-amount').focus(); return; }
       $('a-save').disabled=true; try{ const d=await api('account',{method:'POST',body:{item}}); S.accounts=d.accounts||S.accounts; S.networth=d.networth||S.networth; S.recon=d.recon||S.recon; closeSheet(); toast('Saved '+name); render(); }catch(err){ toast(errMsg(err)); $('a-save').disabled=false; } };
   });
@@ -864,7 +874,8 @@ function openAccountSheet(a, debtDefault){
 function openTransferSheet(){
   const flow=S.accounts.filter(a=>a.active!==false && ['cash','bank','savings','card'].includes(a.type));
   if(flow.length<1){ toast('Add a bank or cash account first.'); return; }
-  const opts=(sel)=>flow.map(a=>`<option value="${esc(a.id)}" ${a.id===sel?'selected':''}>${esc(a.name)} (${esc(a.owner||'Joint')}, ${esc(a.currency)})</option>`).join('');
+  const opt=(a,sel)=>`<option value="${esc(a.id)}" ${a.id===sel?'selected':''}>${esc(a.name)} (${esc(a.owner||'Joint')}, ${esc(a.currency)})</option>`;
+  const opts=(sel)=>{ const ev=flow.filter(a=>bucketOf(a)==='spending'&&a.type!=='card'), sv=flow.filter(a=>bucketOf(a)==='saved'), cd=flow.filter(a=>a.type==='card'); return `<optgroup label="Everyday money">${ev.map(a=>opt(a,sel)).join('')}</optgroup>`+(sv.length?`<optgroup label="Long-term savings">${sv.map(a=>opt(a,sel)).join('')}</optgroup>`:'')+(cd.length?`<optgroup label="Credit cards">${cd.map(a=>opt(a,sel)).join('')}</optgroup>`:''); };
   const bank=flow.find(a=>a.type==='bank'&&a.owner===S.who)||flow.find(a=>a.type==='bank')||flow[0]; const cash=flow.find(a=>a.type==='cash'&&a.owner===S.who)||flow.find(a=>a.type==='cash')||flow.find(a=>a.id!==bank.id)||bank;
   openSheet(`<div class="grab"></div><h3>Move money</h3><div class="muted" style="font-size:13.5px">A transfer between your own accounts is not an expense: cash withdrawals, paying the credit card, moving to savings.</div><div class="form">
     <div class="field"><label for="t-from">From</label><select id="t-from">${opts(bank.id)}</select></div>
@@ -877,7 +888,7 @@ function openTransferSheet(){
     setTimeout(()=>$('t-amount').focus(),300); $('t-cancel').onclick=closeSheet;
     $('t-from').onchange=()=>{ const a=accById($('t-from').value); if(a) $('t-cur').value=a.currency; };
     $('t-save').onclick=async()=>{ const amount=Number($('t-amount').value); if(!(amount>0)){ $('t-amount').focus(); return; } const fromAcc=$('t-from').value, toAcc=$('t-to').value; if(fromAcc===toAcc){ toast('Pick two different accounts.'); return; }
-      const to=accById(toAcc); const desc=$('t-desc').value.trim()|| (to&&to.type==='card'?'Credit card payment': to&&to.type==='cash'?'Cash withdrawal': to&&to.type==='savings'?'To savings':'Transfer');
+      const to=accById(toAcc); const desc=$('t-desc').value.trim()|| (to&&to.type==='card'?'Credit card payment': to&&bucketOf(to)==='saved'?'To long-term savings': to&&to.type==='cash'?'Cash withdrawal':'Transfer');
       $('t-save').disabled=true; try{ await api('move',{method:'POST',body:{move:{kind:'transfer', fromAcc, toAcc, amount, currency:$('t-cur').value, desc, date:$('t-date').value||todayKey()}, by:S.who||''}}); closeSheet(); toast('Moved '+fmtAmt(amount,$('t-cur').value)); load(); }catch(err){ toast(errMsg(err)); $('t-save').disabled=false; } };
   });
 }
@@ -1000,7 +1011,7 @@ document.addEventListener('click',e=>{
   const lm=e.target.closest('li[data-move]'); if(lm){ const m=(S.moves[lm.dataset.month]||[]).find(x=>x.id===lm.dataset.move); if(m) openMoveSheet(m); }
 });
 $('transferBtn').onclick=openTransferSheet;
-$('addAccBtn').onclick=()=>openAccountSheet(null,false); $('addDebtBtn').onclick=()=>openAccountSheet(null,true);
+$('addAccBtn').onclick=()=>openAccountSheet(null,false,false); $('addSavedBtn').onclick=()=>openAccountSheet(null,false,true); $('addDebtBtn').onclick=()=>openAccountSheet(null,true,false);
 $('hSelect').onclick=()=>{ S.selectMode=true; S.selected=new Set(); renderHistory(); };
 $('selCancel').onclick=()=>{ S.selectMode=false; S.selected=new Set(); renderHistory(); };
 $('selAll').onclick=()=>{ const vis=S.visibleIds||[]; const allOn = vis.length && vis.every(id=>S.selected.has(id)); S.selected = allOn? new Set() : new Set(vis); renderHistory(); };

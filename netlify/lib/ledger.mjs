@@ -6,6 +6,8 @@ export const CURRENCIES = ['USD','LBP','EUR','AED'];
 export const DEFAULT_SETTINGS = { members:['Rudy','Aya'], people:['Noah'], base:'USD', rates:{USD:1, LBP:89500, EUR:0.92, AED:3.6725}, budget:null, timezone:'Asia/Beirut', goldPrice:null, cashRules:['ATM','Cash Withdrawal','Careem Deliveries'], defaultPaid:{} };
 export const ACCOUNT_TYPES = ['cash','bank','savings','investment','gold','loan','card'];
 export const LIABILITY_TYPES = ['loan','card'];
+/** Which pot an account belongs to: 'spending' (everyday money) or 'saved' (long-term, not touched). */
+export function bucketOf(a){ if(a.bucket==='saved'||a.bucket==='spending') return a.bucket; return ['savings','investment','gold'].includes(a.type)? 'saved' : 'spending'; }
 
 const TAG_WORDS = {
   Groceries:['grocer','spinneys','carrefour','supermarket','market','vegetable','fruit','bread','milk','chicken','meat','eggs','dekkeneh','minimarket','charcutier'],
@@ -85,7 +87,8 @@ export async function applyAvailable(settings, {last4, owner, available, currenc
 export async function recordSnapshot(settings, accounts, today){
   const {assets,debts}=netWorth(settings, accounts);
   const flow=accounts.filter(a=>a.active!==false && ['cash','bank','savings','card'].includes(a.type)).reduce((t,a)=>t+(a.type==='card'? -toUSD(settings,a.amount,a.currency) : toUSD(settings,a.amount,a.currency)),0);
-  const pts=(await getNetworthPoints()).filter(p=>p.date!==today); pts.push({date:today, assets:Math.round(assets), debts:Math.round(debts), flow:Math.round(flow)});
+  const saved=accounts.filter(a=>a.active!==false && !LIABILITY_TYPES.includes(a.type) && bucketOf(a)==='saved').reduce((t,a)=>t+accountUSD(settings,a),0);
+  const pts=(await getNetworthPoints()).filter(p=>p.date!==today); pts.push({date:today, assets:Math.round(assets), debts:Math.round(debts), flow:Math.round(flow), saved:Math.round(saved)});
   pts.sort((a,b)=>a.date<b.date?-1:1); await writeJSON('networth', {points: pts.slice(-400)});
   return pts;
 }
@@ -148,12 +151,12 @@ export function parseLocal(settings, text, today){
   const tag=guessTag(t);
   desc=desc? desc.charAt(0).toUpperCase()+desc.slice(1) : tag;
   // a transfer between the household's own accounts
-  if(/\b(moved|move|transfer(?:red)?|withdrew|withdraw|withdrawal|deposit(?:ed)?|paid (?:the |my )?(?:credit )?card|card payment|to savings)\b/.test(t)){
-    const pick=w=>/\bsavings?\b/.test(w)?'savings':/\bcard\b/.test(w)?'card':/\bcash\b/.test(w)?'cash':/\bbank|account\b/.test(w)?'bank':null;
+  if(/\b(moved|move|transfer(?:red)?|withdrew|withdraw|withdrawal|deposit(?:ed)?|paid (?:the |my )?(?:credit )?card|card payment|to savings|aside|vault|long[- ]term|permanent savings)\b/.test(t)){
+    const pick=w=>/\b(savings?|vault|permanent|long|aside)\b/.test(w)?'savings':/\bcard\b/.test(w)?'card':/\bcash\b/.test(w)?'cash':/\bbank|account\b/.test(w)?'bank':null;
     let from=null, to=null; const mFrom=t.match(/\bfrom\s+(?:the |my )?(\w+)/), mTo=t.match(/\b(?:to|into)\s+(?:the |my )?(\w+)/);
     if(mFrom) from=pick(mFrom[1]); if(mTo) to=pick(mTo[1]);
-    if(/withdr/.test(t)){ from=from||'bank'; to=to||'cash'; } else if(/deposit/.test(t)){ from=from||'cash'; to=to||'bank'; } else if(/card/.test(t)){ from=from||'bank'; to=to||'card'; } else if(/savings/.test(t)){ from=from||'bank'; to=to||'savings'; }
-    const label = to==='card'?'Credit card payment' : to==='cash'?'Cash withdrawal' : to==='savings'?'To savings' : 'Transfer';
+    if(/withdr/.test(t)){ from=from||'bank'; to=to||'cash'; } else if(/deposit/.test(t)){ from=from||'cash'; to=to||'bank'; } else if(/card/.test(t)){ from=from||'bank'; to=to||'card'; } else if(/savings|vault|aside|long[- ]term|permanent/.test(t)){ from=from||'bank'; to=to||'savings'; }
+    const label = to==='card'?'Credit card payment' : to==='cash'?'Cash withdrawal' : to==='savings'?'To long-term savings' : 'Transfer';
     return [{kind:'transfer', from:from||'bank', to:to||'cash', amount: amount==null?0:amount, currency, description:label, tag:'Other', date, by, note:null, paidWith:null}];
   }
   // how it was paid, when said
@@ -180,7 +183,7 @@ export async function parseWithClaude(settings, textIn, today){
 Today: ${today} (${weekdayIn(settings.timezone)}). Household members: ${settings.members.join(', ')}. Default currency: ${settings.base}. Other currencies in use: LBP (Lebanese lira; people say "lira", "L.L.", "500 thousand", "2 million" meaning lira), EUR, and AED (UAE dirhams; "dirhams", "AED").
 Tags, pick exactly one per expense: ${TAGS.join(', ')}.
 Object shape: {"kind": "expense"|"transfer", "amount": number, "currency": "USD"|"LBP"|"EUR"|"AED", "description": string, "tag": string, "date": "YYYY-MM-DD", "by": string|null, "note": string|null, "paidWith": "cash"|"card"|"bank"|null, "from": "cash"|"bank"|"savings"|"card"|null, "to": "cash"|"bank"|"savings"|"card"|null}
-kind is "transfer" when money moved between the household's own accounts rather than being spent: withdrew cash / took out money (bank→cash), paid the credit card or card bill (bank→card), moved to savings (bank→savings), deposited cash (cash→bank); then set from and to, and description like "Cash withdrawal" or "Credit card payment". Otherwise kind is "expense" and paidWith is "cash", "card" or "bank" only when the note says how it was paid ("cash", "by card", "with the card", "from the bank"), else null.
+kind is "transfer" when money moved between the household's own accounts rather than being spent: withdrew cash / took out money (bank→cash), paid the credit card or card bill (bank→card), moved to savings / the vault / long-term / permanent savings / put aside (→savings), deposited cash (cash→bank); then set from and to, and description like "Cash withdrawal", "Credit card payment" or "To long-term savings". Otherwise kind is "expense" and paidWith is "cash", "card" or "bank" only when the note says how it was paid ("cash", "by card", "with the card", "from the bank"), else null.
 Rules: amount is the number spent (spoken numbers like "forty five" become 45; "1.2k" is 1200; "500 thousand lira" is 500000 LBP); the note may start with filler like "add to my expenses", ignore it; description is 2-6 words saying what or where, Title Case, with no amount or currency in it; date is today unless the note says otherwise (yesterday, last Tuesday, on the 3rd); by is a member name only when the note says who paid, else null; note keeps any leftover detail, else null. If no amount can be found, use 0.`;
   const res = await claudeMessage({ model: parseModel(), system, max_tokens: 400, messages:[{role:'user', content:`Note: """${String(textIn).replace(/"""/g,'"')}"""`}] });
   const data = await res.json();
@@ -256,7 +259,7 @@ ${budget}`,
 function wealthLine(w, monthlySpend){
   if(!w || (!w.assets && !w.debts)) return '';
   const usd=v=>Math.round(v); const runway = monthlySpend>0 ? (w.liquid/monthlySpend).toFixed(1) : 'n/a';
-  return `Balances today: assets ${usd(w.assets)} (of which liquid cash and bank ${usd(w.liquid)}), debts ${usd(w.debts)}, net worth ${usd(w.net)}. Liquid savings cover about ${runway} months of total spending. Mention this in "Fixed costs" or "Try this" only when it changes the advice (for example an expensive debt worth paying down, or a thin cushion).`;
+  return `Balances today: assets ${usd(w.assets)} (of which everyday money in bank and pocket cash ${usd(w.liquid)}; long-term savings not to be touched ${usd(w.saved||0)}), debts ${usd(w.debts)}, net worth ${usd(w.net)}. Everyday money covers about ${runway} months of total spending.${w.savedThisMonth!=null? ` Moved into long-term savings this month: ${usd(w.savedThisMonth)}.` : ''} Mention this in "Fixed costs" or "Try this" only when it changes the advice (for example an expensive debt worth paying down, or a thin cushion).`;
 }
 function coachSystem(settings){
   return `You are a careful, friendly household finance coach for a two-person household (${settings.members.join(' and ')}) living in Lebanon. Reply in plain text only (no markdown symbols such as # or **), at most 230 words, using exactly these short section titles on their own lines: Headline / Watch out / Try this / Fixed costs. In "Watch out" name the categories or items that look high or unusual with their numbers. In "Try this" give 3 concrete, specific changes, each with a rough monthly saving in dollars. In "Fixed costs" say in one or two sentences how large subscriptions and staff salaries are relative to everything and whether anything there deserves a second look. When household income is given, open the Headline with how much of it is left over (the savings rate) and whether that is healthy. Be specific to the numbers; no generic advice; no greetings. Amounts are in USD.`;

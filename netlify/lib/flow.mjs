@@ -1,5 +1,5 @@
 // Money flow: movements between accounts, account matching for bank alerts, and expected-vs-actual balances.
-import { HttpError, readJSON, writeJSON, mutateList, getAccounts, getMonth, getIncome, recordSnapshot, toUSD, rate, newId, shiftMonth, memberName, LIABILITY_TYPES } from "./ledger.mjs";
+import { HttpError, readJSON, writeJSON, mutateList, getAccounts, getMonth, getIncome, recordSnapshot, toUSD, rate, newId, shiftMonth, memberName, bucketOf, LIABILITY_TYPES } from "./ledger.mjs";
 
 export const MOVE_KINDS = ['transfer','income','refund','adjust'];
 export const FLOW_TYPES = ['cash','bank','savings','card'];   // accounts that take part in the monthly check
@@ -37,10 +37,13 @@ export function matchCardAcc(accounts, {last4, owner}){
 }
 /** The owner's account of a given type (cash, bank, savings, card); creates a cash account when asked and none exists. */
 export async function accountOfType(settings, accounts, type, owner, {create=false, currency}={}){
-  const mine=accounts.filter(a=>a.type===type && a.active!==false && (!owner || String(a.owner||'').toLowerCase()===String(owner).toLowerCase()));
-  if(mine.length) return mine[0];
-  const any=accounts.filter(a=>a.type===type && a.active!==false);
-  if(any.length===1 && !owner) return any[0];
+  const own=a=>!owner || String(a.owner||'').toLowerCase()===String(owner).toLowerCase();
+  const pool = type==='savings' ? accounts.filter(a=>a.active!==false && (a.type==='savings' || (bucketOf(a)==='saved' && ['cash','bank'].includes(a.type))))
+             : type==='cash' ? accounts.filter(a=>a.active!==false && a.type==='cash' && bucketOf(a)==='spending')
+             : accounts.filter(a=>a.active!==false && a.type===type);
+  const mine=pool.filter(own); if(mine.length) return mine.sort((a,b)=>(a.type==='savings'?0:1)-(b.type==='savings'?0:1))[0];
+  const any=pool; if(any.length===1 && !owner) return any[0];
+  if(any.length && type==='savings') return any[0];
   if(create && type==='cash'){
     const now=Date.now(); const doc={ id:newId(), name: owner? `Cash (${owner})` : 'Cash', type:'cash', owner:owner||'Joint', amount:0, currency:currency||settings.base, confirmed:{amount:0, date:new Date(now).toISOString().slice(0,10), ts:now}, active:true, ts:now };
     await mutateList('accounts', items=>items.concat([doc])); return doc;
@@ -160,9 +163,11 @@ export async function monthCheck(settings, mk, accounts, networth, today){
   const incomeUSD=moves.filter(m=>m.kind==='income').reduce((t,m)=>t+m.usd,0);
   const refundsUSD=moves.filter(m=>m.kind==='refund').reduce((t,m)=>t+m.usd,0);
   const adjustUSD=moves.filter(m=>m.kind==='adjust').reduce((t,m)=>t+(m.toAcc? m.usd : -m.usd),0);
+  const byId=Object.fromEntries(accounts.map(a=>[a.id,a])); const bk=id=>byId[id]? bucketOf(byId[id]) : null;
+  const savedUSD=moves.filter(m=>m.kind==='transfer').reduce((t,m)=>t+((bk(m.toAcc)==='saved'&&bk(m.fromAcc)!=='saved')? m.usd : (bk(m.fromAcc)==='saved'&&bk(m.toAcc)!=='saved')? -m.usd : 0),0);
   const planned=income.filter(i=>i.active!==false).map(i=>({id:i.id, name:i.name, by:i.by, usd: toUSD(settings,i.amount,i.currency)*(i.period==='yearly'?1/12:1), received: moves.some(m=>m.kind==='income' && m.incomeId===i.id)}));
   const flowNow=accounts.filter(a=>a.active!==false && FLOW_TYPES.includes(a.type)).reduce((t,a)=>t+(a.type==='card'? -toUSD(settings,a.amount,a.currency) : toUSD(settings,a.amount,a.currency)),0);
   const pts=(networth||[]).filter(p=>p.flow!=null); const startPt=[...pts].reverse().find(p=>p.date<mk+'-01') || pts.find(p=>p.date>=mk+'-01'); const endPt=[...pts].reverse().find(p=>p.date<=mk+'-31');
   const actualDelta = (startPt && endPt && startPt!==endPt)? (endPt.flow-startPt.flow) : null;
-  return { month:mk, spentUSD, incomeUSD, refundsUSD, adjustUSD, planned, plannedUSD: planned.reduce((t,p)=>t+p.usd,0), expectedDelta: incomeUSD+refundsUSD-spentUSD, actualDelta, flowNow, startDate: startPt? startPt.date : null };
+  return { month:mk, spentUSD, incomeUSD, refundsUSD, adjustUSD, savedUSD, planned, plannedUSD: planned.reduce((t,p)=>t+p.usd,0), expectedDelta: incomeUSD+refundsUSD-spentUSD, actualDelta, flowNow, startDate: startPt? startPt.date : null };
 }
