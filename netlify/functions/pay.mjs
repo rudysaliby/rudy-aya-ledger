@@ -53,6 +53,7 @@ export default async (req) => {
     items=[{...items[0], kind:'expense', amount:money.amount, currency:CURRENCIES.includes(money.currency)?money.currency:settings.base, by:items[0].by||null, note: card? 'Apple Pay · '+card : 'Apple Pay', from: cardAcc? cardAcc.id : null, raw: merchant+'|'+money.amount+'|'+money.currency}];
     const saved=await saveExpenses(settings, items, {by:who, source:'applepay'});
     const s=saved[0];
+    console.log('[pay]', JSON.stringify({merchant, amount:money.amount, currency:money.currency, desc:s.desc, tag:s.tag}));
     return text(`Added ${fmt(settings, s.usd)}, ${s.desc}, ${s.tag}${s.by?' for '+s.by:''}.`);
   }catch(e){
     const status = e instanceof HttpError ? e.status : 500;

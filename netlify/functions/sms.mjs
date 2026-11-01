@@ -110,9 +110,12 @@ export default async (req) => {
     if(acc && a.available!=null && Number(a.available)>=0){
       try{ const r=await applyReading(settings, acc, Number(a.available), a.available_currency||null, today); if(r) notes.push(acc.type==='card'? `Card debt now ${fmtAmount(r.account.amount, acc.currency)}.` : `${acc.name} balance now ${fmtAmount(r.account.amount, acc.currency)}.`); }catch(e){}
     } else if(!acc && a.available!=null){ notes.push(isCard? 'No credit-card account matched this alert; add one in Wealth with the card\'s last digits.' : 'No bank account matched this alert; add one in Wealth with the account number mask.'); }
-    return text((headline||'Nothing to add.')+(notes.length?' '+notes.join(' '):''));
+    const reply=(headline||'Nothing to add.')+(notes.length?' '+notes.join(' '):'');
+    console.log('[sms]', JSON.stringify({kind:a.kind, amount, currency, account: acc? acc.name : null, isCard, available:a.available, dup, reply}));
+    return text(reply);
   }catch(e){
     const status = e instanceof HttpError ? e.status : 500;
+    console.log('[sms] error', status, e.message);
     return text(status===401 ? 'The household key is wrong.' : ('Could not save: '+(e.message||'server error')), status);
   }
 };
