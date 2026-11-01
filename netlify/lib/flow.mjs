@@ -1,5 +1,5 @@
 // Money flow: movements between accounts, account matching for bank alerts, and expected-vs-actual balances.
-import { HttpError, readJSON, mutateList, getAccounts, getMonth, getIncome, recordSnapshot, toUSD, rate, newId, shiftMonth, bucketOf } from "./ledger.mjs";
+import { HttpError, readJSON, mutateList, getAccounts, getMonth, getIncome, recordSnapshot, toUSD, rate, newId, shiftMonth, bucketOf, listKeys } from "./ledger.mjs";
 
 export const MOVE_KINDS = ['transfer','income','refund','adjust'];
 export const FLOW_TYPES = ['cash','bank','savings','card'];   // accounts that take part in the monthly check
@@ -172,6 +172,29 @@ export async function applyCardPayment(cardId, amountInCardCur){
     const due=Math.max(0, Math.round(((Number(a.due)||0)-amountInCardCur)*100)/100);
     const lastPayment = amountInCardCur>0 ? {amount:amountInCardCur, ts:Date.now()} : (a.lastPayment && Math.abs((a.lastPayment.amount||0)+amountInCardCur)<0.01 ? null : a.lastPayment||null);
     return {...a, due, lastPayment}; }));
+}
+/**
+ * Fold duplicate auto-created "Cash in hand" accounts (same owner, pot and currency) into the oldest one: every expense
+ * and movement that pointed at a duplicate is re-pointed, balances are added up and the survivor gets a fresh baseline.
+ * Returns the number of accounts merged away, or 0.
+ */
+export async function mergeDuplicateCash(settings, today){
+  const accounts=await getAccounts();
+  const auto=a=>a.type==='cash' && a.active!==false && /^cash in hand(\s*\(.*\))?$/i.test(String(a.name||'').trim());
+  const groups={};
+  for(const a of accounts){ if(!auto(a)) continue; const k=[String(a.owner||'joint').toLowerCase(), bucketOf(a), a.currency||settings.base].join('|'); (groups[k]=groups[k]||[]).push(a); }
+  const remap={};
+  for(const g of Object.values(groups)){ if(g.length<2) continue; g.sort((a,b)=>(a.ts||0)-(b.ts||0)); for(const d of g.slice(1)) remap[d.id]=g[0].id; }
+  const gone=Object.keys(remap); if(!gone.length) return 0;
+  for(const mk of await listKeys('months/')){ if((await getMonth(mk)).some(e=>remap[e.from])) await mutateList('months/'+mk, items=>items.map(e=> remap[e.from]? {...e, from:remap[e.from]} : e)); }
+  for(const mk of await listKeys('moves/')){ if((await getMoves(mk)).some(m=>remap[m.fromAcc]||remap[m.toAcc])) await mutateList('moves/'+mk, items=>items.map(m=>{ const f=remap[m.fromAcc]||m.fromAcc, t=remap[m.toAcc]||m.toAcc; return (f!==m.fromAcc||t!==m.toAcc)? {...m, fromAcc:f, toAcc:t} : m; })); }
+  const now=Date.now();
+  const items=await mutateList('accounts', items=>{
+    const sums={}; for(const a of items){ if(remap[a.id]) sums[remap[a.id]]=(sums[remap[a.id]]||0)+(Number(a.amount)||0); }
+    return items.filter(a=>!remap[a.id]).map(a=>{ if(sums[a.id]==null) return a; const amount=Math.round(((Number(a.amount)||0)+sums[a.id])*100)/100; return {...a, amount, confirmed:{amount, date:today, ts:now}, updatedAt:today}; });
+  });
+  await recordSnapshot(settings, items, today);
+  return gone.length;
 }
 /** Figures for the Wealth tab: due on the next pay day, and charges since the statement. */
 export function cardCycle(card, today){

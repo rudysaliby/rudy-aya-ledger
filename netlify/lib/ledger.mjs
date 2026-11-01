@@ -76,11 +76,12 @@ export async function recordSnapshot(settings, accounts, today){
 }
 export function incomeMonthlyUSD(settings, items){ return items.filter(i=>i.active!==false).reduce((a,i)=>{ const u=toUSD(settings,i.amount,i.currency); return a+(i.period==='yearly'?u/12:u); },0); }
 export async function putRecurring(items){ await writeJSON('recurring', {items}); }
-/** Month keys that hold at least one document, oldest first. */
-export async function listMonthKeys(){
-  try{ const {blobs} = await store().list({prefix:'months/'}); return blobs.map(b=>b.key.replace(/^months\//,'')).filter(k=>/^\d{4}-\d{2}$/.test(k)).sort(); }
+/** Month keys under a prefix ("months/" or "moves/") that hold a document, oldest first. */
+export async function listKeys(prefix){
+  try{ const {blobs} = await store().list({prefix}); return blobs.map(b=>b.key.slice(prefix.length)).filter(k=>/^\d{4}-\d{2}$/.test(k)).sort(); }
   catch(e){ return []; }
 }
+export async function listMonthKeys(){ return listKeys('months/'); }
 /** Read-modify-write one list document with an etag check, retried, so two phones saving at once never lose an entry. */
 export async function mutateList(key, fn){
   const s = store();

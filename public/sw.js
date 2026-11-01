@@ -1,5 +1,5 @@
 // Keeps the app shell cached so the icon opens instantly; data always comes from the network.
-const CACHE = 'ledger-shell-v17';
+const CACHE = 'ledger-shell-v18';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png', '/icons/icon-512-rounded.png'];
 const isShell = (p) => p === '/' || p === '/index.html';
 

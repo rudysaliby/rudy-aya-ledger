@@ -1,7 +1,7 @@
 // JSON API for the ledger app. All routes need the household key.
 import { HttpError, checkAuth, json, text, getSettings, getMonth, getRecurring, getIncome, incomeMonthlyUSD, getAccounts, getNetworthPoints, accountUSD, netWorth, recordSnapshot, bucketOf, ACCOUNT_TYPES, LIABILITY_TYPES, writeJSON, mutateList, listMonthKeys,
   parseNote, saveExpenses, toUSD, rate, todayIn, shiftMonth, monthStats, analysisPrompt, rangeAnalysisPrompt, claudeMessage, analysisModel, newId, TAGS, CURRENCIES, DEFAULT_SETTINGS } from "../lib/ledger.mjs";
-import { getMoves, saveMove, deleteMove, accountOfType, confirmBalance, advanceBaseline, reconcile, monthCheck, rollStatements, applyCardPayment, cardCycle, lastDay, withSync, MOVE_KINDS } from "../lib/flow.mjs";
+import { getMoves, saveMove, deleteMove, accountOfType, confirmBalance, advanceBaseline, reconcile, monthCheck, rollStatements, mergeDuplicateCash, applyCardPayment, cardCycle, lastDay, withSync, MOVE_KINDS } from "../lib/flow.mjs";
 import { bookItems, resolveAcc } from "../lib/book.mjs";
 
 export const config = { path: "/api/*" };
@@ -20,8 +20,10 @@ export default async (req) => {
     if(route==='state' && req.method==='GET'){
       const months=(url.searchParams.get('months')||'').split(',').filter(m=>/^\d{4}-\d{2}$/.test(m));
       const keys = months.length? months : (()=>{ const cm=today.slice(0,7); const a=[]; for(let i=5;i>=0;i--) a.push(shiftMonth(cm,-i)); return a; })();
-      const [recurring, income, accounts0, networth, monthKeys, ...docs] = await Promise.all([getRecurring(), getIncome(), getAccounts(), getNetworthPoints(), listMonthKeys(), ...keys.map(k=>getMonth(k))]);
-      let accounts=accounts0; try{ accounts=await rollStatements(settings, today); }catch(e){}
+      // housekeeping first (fold duplicate cash accounts, missing baselines, statement day), then read everything
+      let accounts=null; try{ await mergeDuplicateCash(settings, today); accounts=await rollStatements(settings, today); }catch(e){}
+      const [recurring, income, accounts0, networth, monthKeys, ...docs] = await Promise.all([getRecurring(), getIncome(), accounts? Promise.resolve(accounts) : getAccounts(), getNetworthPoints(), listMonthKeys(), ...keys.map(k=>getMonth(k))]);
+      accounts=accounts0;
       const cycles={}; for(const a of accounts){ if(a.type==='card') cycles[a.id]=cardCycle(a, today); }
       const mv=await Promise.all(keys.map(k=>getMoves(k)));
       const out={}, moves={}; keys.forEach((k,i)=>{ out[k]=docs[i]; moves[k]=mv[i]; });

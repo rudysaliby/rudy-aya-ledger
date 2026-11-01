@@ -416,6 +416,11 @@ function bucketOf(a){ if(a.bucket==='saved'||a.bucket==='spending') return a.buc
 function typeLabel(a){ const t=accType(a.type); if(a.type==='cash') return bucketOf(a)==='saved'? 'Savings (cash)' : 'Cash in hand'; if(a.type==='bank' && bucketOf(a)==='saved') return 'Savings (bank)'; return t[1]; }
 function typeIcon(a){ if(a.type==='cash' && bucketOf(a)==='saved') return '🐷'; return accType(a.type)[2]; }
 function accById(id){ return id? S.accounts.find(a=>a.id===id) : null; }
+/** One unambiguous line per account for pickers: name, owner (unless the name says it), kind (unless the name says it), balance. */
+function accLabel(a){ const n=String(a.name||'').trim(); const owner=a.owner||'Joint'; const tl=typeLabel(a); const parts=[n + (n.toLowerCase().includes(owner.toLowerCase())? '' : ' ('+owner+')')]; if(!n.toLowerCase().includes(tl.toLowerCase().replace(/\s*\(.*\)$/,''))) parts.push(tl); parts.push((LIAB.includes(a.type)? 'owes ' : '')+fmtAmt(a.amount, a.currency)); return parts.join(' · '); }
+/** <optgroup>s of the flow accounts, everyday money first, then long-term savings, then credit cards. */
+function accOptgroups(flow, sel){ const opt=a=>`<option value="${esc(a.id)}" ${a.id===sel?'selected':''}>${esc(accLabel(a))}</option>`; const ev=flow.filter(a=>bucketOf(a)==='spending'&&a.type!=='card'), sv=flow.filter(a=>bucketOf(a)==='saved'&&a.type!=='card'), cd=flow.filter(a=>a.type==='card'); return (ev.length?`<optgroup label="Everyday money">${ev.map(opt).join('')}</optgroup>`:'')+(sv.length?`<optgroup label="Long-term savings">${sv.map(opt).join('')}</optgroup>`:'')+(cd.length?`<optgroup label="Credit cards">${cd.map(opt).join('')}</optgroup>`:''); }
+function flowAccounts(){ return S.accounts.filter(a=>a.active!==false && ['cash','bank','savings','card'].includes(a.type)); }
 function srcChip(e){ const a=accById(e.from); if(!a) return ''; const lbl = a.type==='card'? ('card'+(a.last4?' ··'+a.last4:'')) : a.type==='cash'? (bucketOf(a)==='saved'?'savings':'in hand') : a.type==='savings'? 'savings' : 'bank'; return `<span class="src">${accType(a.type)[2]} ${esc(lbl)}</span>`; }
 function moveRowHTML(m){ const f=accById(m.fromAcc), t=accById(m.toAcc); const icon = m.kind==='income'?'⬇️':m.kind==='refund'?'↩️':m.kind==='adjust'?'⚖️':'↔️';
   const path = m.kind==='income'? ('→ '+(t?t.name:'?')) : m.kind==='refund'? ('→ '+(t?t.name:'?')) : m.kind==='adjust'? (t? '→ '+t.name : f? f.name+' →' : '') : ((f?f.name:'?')+' → '+(t?t.name:'?'));
@@ -778,7 +783,7 @@ function openExpenseSheet(e){
     <div class="field"><label>Category</label><div class="chips">${chipsHTML('tag',TAGS,d.tag)}</div></div>
     <div class="grid2"><div class="field"><label>Paid by</label><div class="chips">${chipsHTML('by',members,d.by,true)}</div></div>
     <div class="field"><label for="f-date">Date</label><input id="f-date" type="date" value="${esc(d.date)}"></div></div>
-    <div class="field"><label for="f-from">Paid from</label><select id="f-from"><option value="auto" ${fromSel==='auto'?'selected':''}>Default for ${esc(d.by||S.who||'this person')} (${esc(((S.settings.defaultPaid||{})[d.by||S.who]||'cash'))})</option>${S.accounts.filter(a=>a.active!==false && ['cash','bank','savings','card'].includes(a.type)).map(a=>`<option value="${esc(a.id)}" ${a.id===fromSel?'selected':''}>${esc(a.name)} (${esc(a.owner||'Joint')})</option>`).join('')}<option value="none" ${fromSel==='none'?'selected':''}>Not tracked</option></select></div>
+    <div class="field"><label for="f-from">Paid from</label><select id="f-from"><option value="auto" ${fromSel==='auto'?'selected':''}>Default for ${esc(d.by||S.who||'this person')} (${esc(((S.settings.defaultPaid||{})[d.by||S.who]||'cash'))})</option>${accOptgroups(flowAccounts(), fromSel)}<option value="none" ${fromSel==='none'?'selected':''}>Not tracked</option></select></div>
     <div class="field"><label for="f-note">Note</label><input id="f-note" value="${esc(d.note||'')}" placeholder="Optional"></div>
     <div class="actions"><div>${isNew?'':'<button type="button" class="danger" id="f-del">Delete</button>'}</div><div class="right"><button type="button" class="secondary" id="f-cancel">Cancel</button><button type="button" class="primary" id="f-save">${isNew?'Add':'Save'}</button></div></div>
   </div>`, root=>{
@@ -888,10 +893,9 @@ function openAccountSheet(a, debtDefault, savedDefault){
   });
 }
 function openTransferSheet(){
-  const flow=S.accounts.filter(a=>a.active!==false && ['cash','bank','savings','card'].includes(a.type));
-  if(flow.length<1){ toast('Add a bank or cash account first.'); return; }
-  const opt=(a,sel)=>`<option value="${esc(a.id)}" ${a.id===sel?'selected':''}>${esc(a.name)} · ${esc(typeLabel(a))} (${esc(a.owner||'Joint')}, ${esc(a.currency)})</option>`;
-  const opts=(sel)=>{ const ev=flow.filter(a=>bucketOf(a)==='spending'&&a.type!=='card'), sv=flow.filter(a=>bucketOf(a)==='saved'), cd=flow.filter(a=>a.type==='card'); return `<optgroup label="Everyday money">${ev.map(a=>opt(a,sel)).join('')}</optgroup>`+(sv.length?`<optgroup label="Long-term savings">${sv.map(a=>opt(a,sel)).join('')}</optgroup>`:'')+(cd.length?`<optgroup label="Credit cards">${cd.map(a=>opt(a,sel)).join('')}</optgroup>`:''); };
+  const flow=flowAccounts();
+  if(flow.length<2){ toast('Add two accounts first (a bank and cash in hand, say).'); return; }
+  const opts=sel=>accOptgroups(flow, sel);
   const bank=flow.find(a=>a.type==='bank'&&a.owner===S.who)||flow.find(a=>a.type==='bank')||flow[0]; const cash=flow.find(a=>a.type==='cash'&&bucketOf(a)==='spending'&&a.owner===S.who)||flow.find(a=>a.type==='cash'&&bucketOf(a)==='spending')||flow.find(a=>a.id!==bank.id)||bank;
   openSheet(`<div class="grab"></div><h3>Move money</h3><div class="muted" style="font-size:13.5px">A transfer between your own accounts is not an expense: cash withdrawals, paying the credit card, moving to savings.</div><div class="form">
     <div class="field"><label for="t-from">From</label><select id="t-from">${opts(bank.id)}</select></div>
