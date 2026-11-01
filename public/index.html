@@ -466,7 +466,7 @@ function rowHTML(e, selectable){
   const showDate = e.date!==todayKey();
   const orig = e.currency!==S.settings.base ? `<small>${esc(fmtAmt(e.amount,e.currency))}</small>` : '';
   const sel = selectable && S.selected.has(e.id);
-  return `<li class="tap ${sel?'sel':''}" data-id="${esc(e.id)}" data-month="${esc(e.month)}">${selectable? `<span class="tick">${sel?'✓':''}</span>` : `<span class="tagdot" aria-hidden="true">${TAG_ICON[e.tag]||'•'}</span>`}<div class="main"><div class="desc">${esc(e.desc)}</div><div class="meta"><i class="dot" style="background:${memberColor(e.by)};margin-right:4px"></i>${esc(e.by||'?')} · ${esc(e.tag)}${showDate?' · '+esc(dayLabel(e.date)):''}${e.note?' · '+esc(e.note):''}</div></div><div class="amt">${esc(fmtBase(e.usd))}${orig}</div></li>`;
+  return `<li class="tap ${sel?'sel':''}" data-id="${esc(e.id)}" data-month="${esc(e.month)}">${selectable? `<span class="tick">${sel?'✓':''}</span>` : `<span class="tagdot" aria-hidden="true">${TAG_ICON[e.tag]||'•'}</span>`}<div class="main"><div class="desc">${esc(e.desc)}</div><div class="meta"><i class="dot" style="background:${memberColor(e.by)};margin-right:4px"></i>${esc(e.by||'?')} · ${esc(e.tag)}${showDate?' · '+esc(dayLabel(e.date)):''}${e.source==='applepay'?' ·  Pay':(e.note?' · '+esc(e.note):'')}</div></div><div class="amt">${esc(fmtBase(e.usd))}${orig}</div></li>`;
 }
 function renderHistory(){
   const mk=S.hMonth; $('hMonth').textContent=monthLabel(mk); $('hNext').disabled = mk>=monthKey(new Date()); $('hNext').style.opacity=$('hNext').disabled?.4:1;
@@ -805,6 +805,7 @@ function openAccountSheet(a, debtDefault){
   });
 }
 function siriURL(who){ return location.origin+'/siri?key='+encodeURIComponent(S.key)+'&by='+encodeURIComponent(who||S.who||'')+'&text='; }
+function payURL(who){ return location.origin+'/pay?key='+encodeURIComponent(S.key)+'&by='+encodeURIComponent(who||S.who||''); }
 function openSettingsSheet(){
   const s=S.settings;
   openSheet(`<div class="grab"></div><h3>Settings</h3><div class="form">
@@ -824,11 +825,17 @@ function openSettingsSheet(){
       <div class="code" id="s-siriurl">${esc(siriURL())}</div>
       <div><button type="button" class="secondary" id="s-copy">Copy address</button></div>
     </div>
+    <div class="field"><label>Apple Pay automation for this phone</label>
+      <div class="help">Shortcuts → Automation → <b>+</b> → <b>Transaction</b> → your card → Run Immediately. Add <b>Get Contents of URL</b> with the address below, Method <b>POST</b>, Request Body <b>Form</b>, fields <b>merchant</b> = Merchant, <b>amount</b> = Amount, <b>card</b> = Card or Pass.</div>
+      <div class="code" id="s-payurl">${esc(payURL())}</div>
+      <div><button type="button" class="secondary" id="s-copy2">Copy address</button></div>
+    </div>
     <div class="field"><label>This phone</label><button type="button" class="link" id="s-signout" style="text-align:left">Forget the household key on this phone</button></div>
     <div class="actions"><div></div><div class="right"><button type="button" class="secondary" id="s-cancel">Cancel</button><button type="button" class="primary" id="s-save">Save</button></div></div>
   </div>`, root=>{
     wireChips(root); $('s-cancel').onclick=closeSheet;
-    root.querySelectorAll('[data-chip="who"]').forEach(b=>b.addEventListener('click',()=>{ $('s-siriurl').textContent=siriURL(b.dataset.val); }));
+    root.querySelectorAll('[data-chip="who"]').forEach(b=>b.addEventListener('click',()=>{ $('s-siriurl').textContent=siriURL(b.dataset.val); $('s-payurl').textContent=payURL(b.dataset.val); }));
+    $('s-copy2').onclick=()=>{ const t=$('s-payurl').textContent; try{ navigator.clipboard.writeText(t).then(()=>{ $('s-copy2').textContent='Copied'; }, ()=>selectText($('s-payurl'))); }catch(e){ selectText($('s-payurl')); } };
     $('s-copy').onclick=()=>{ const t=$('s-siriurl').textContent; const done=()=>{ $('s-copy').textContent='Copied'; }; try{ navigator.clipboard.writeText(t).then(done, ()=>{ selectText($('s-siriurl')); }); }catch(e){ selectText($('s-siriurl')); } };
     $('s-signout').onclick=()=>{ closeSheet(); signOut(); };
     $('s-save').onclick=async()=>{ const who=chipVal(root,'who'); if(who){ S.who=who; lsSet('who',who); }

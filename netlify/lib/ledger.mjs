@@ -178,7 +178,7 @@ export async function saveExpenses(settings, items, {by, source}){
   const saved=[]; const byMonth={};
   for(const p of items){
     const date = p.date; const mk=date.slice(0,7); const cur=p.currency||settings.base;
-    const doc = { id:newId(), amount:Number(p.amount)||0, currency:cur, usd:toUSD(settings,p.amount,cur), desc:p.description||p.desc||'Expense', tag:TAGS.includes(p.tag)?p.tag:'Other', by:p.by||by||'', date, month:mk, ts:Date.now(), source:source||'text', note:p.note||null };
+    const doc = { id:newId(), amount:Number(p.amount)||0, currency:cur, usd:toUSD(settings,p.amount,cur), desc:p.description||p.desc||'Expense', tag:TAGS.includes(p.tag)?p.tag:'Other', by:p.by||by||'', date, month:mk, ts:Date.now(), source:source||'text', note:p.note||null, ...(p.raw? {raw:String(p.raw).slice(0,200)} : {}) };
     (byMonth[mk]=byMonth[mk]||[]).push(doc); saved.push(doc);
   }
   for(const [mk,docs] of Object.entries(byMonth)){ await mutateList('months/'+mk, items=>items.concat(docs)); }
