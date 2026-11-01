@@ -72,7 +72,8 @@ export default async (req) => {
     // ---- accounts (savings, bank, gold, debts) ----
     if(route==='account' && req.method==='POST'){
       const a=body.item||{}; const type=ACCOUNT_TYPES.includes(a.type)? a.type : 'bank';
-      const doc={ id:a.id||newId(), name:String(a.name||'').slice(0,60)||'Account', type, owner:String(a.owner||'').slice(0,40), amount:Math.abs(Number(a.amount))||0, currency:CURRENCIES.includes(a.currency)?a.currency:settings.base, grams: type==='gold'? (Math.abs(Number(a.grams))||0) : null, note:a.note?String(a.note).slice(0,120):null, active:a.active!==false, updatedAt:today, ts:a.ts||Date.now() };
+      const doc={ id:a.id||newId(), name:String(a.name||'').slice(0,60)||'Account', type, owner:String(a.owner||'').slice(0,40), amount:Math.abs(Number(a.amount))||0, currency:CURRENCIES.includes(a.currency)?a.currency:settings.base, grams: type==='gold'? (Math.abs(Number(a.grams))||0) : null, limit: type==='card'? (Math.abs(Number(a.limit))||null) : null, available: type==='card' && a.available!=='' && a.available!=null ? Math.abs(Number(a.available))||0 : null, last4: a.last4? String(a.last4).replace(/\D/g,'').slice(-4)||null : null, note:a.note?String(a.note).slice(0,120):null, active:a.active!==false, updatedAt:today, ts:a.ts||Date.now() };
+      if(type==='card' && doc.limit && doc.available!=null) doc.amount=Math.round((doc.limit-Math.min(doc.limit,doc.available))*100)/100;
       const items=await mutateList('accounts', items=>{ const i=items.findIndex(x=>x.id===doc.id); if(i>=0) items[i]=doc; else items.push(doc); return items; });
       const networth=await recordSnapshot(settings, items, today);
       return json({saved:doc, accounts:items, networth});

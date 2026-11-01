@@ -63,6 +63,24 @@ export function netWorth(settings, accounts){
   for(const a of accounts){ if(a.active===false) continue; const v=accountUSD(settings,a); if(LIABILITY_TYPES.includes(a.type)) debts+=v; else assets+=v; }
   return {assets, debts, net: assets-debts};
 }
+/** Find the credit-card account an alert refers to: by last digits, else the owner's only card, else the only card. */
+export function matchCard(accounts, {last4, owner}){
+  const cards=accounts.filter(a=>a.type==='card' && a.active!==false);
+  if(!cards.length) return null;
+  if(last4){ const c=cards.find(a=>String(a.last4||'')===String(last4)); if(c) return c; }
+  if(owner){ const mine=cards.filter(a=>String(a.owner||'').toLowerCase()===String(owner).toLowerCase()); if(mine.length===1) return mine[0]; }
+  return cards.length===1 ? cards[0] : null;
+}
+/** Apply an available-balance reading to a card: debt = limit − available. Returns the updated account list or null. */
+export async function applyAvailable(settings, {last4, owner, available, currency, today}){
+  const accounts=await getAccounts(); const card=matchCard(accounts,{last4, owner}); if(!card) return null;
+  const limit=Number(card.limit)||0; if(!(limit>0)) return null;
+  if(currency && card.currency && currency!==card.currency) return null; // a different card's currency: leave it alone
+  const avail=Math.max(0, Math.min(limit, Number(available)||0)); const debt=Math.round((limit-avail)*100)/100;
+  const items=await mutateList('accounts', items=>items.map(a=> a.id===card.id ? {...a, available:avail, amount:debt, updatedAt:today} : a));
+  await recordSnapshot(settings, items, today);
+  return {card:{...card, available:avail, amount:debt}, accounts:items};
+}
 /** Keep one net-worth point per day so the Wealth tab can draw a history line. */
 export async function recordSnapshot(settings, accounts, today){
   const {assets,debts}=netWorth(settings, accounts);
@@ -103,6 +121,7 @@ export function daysInMonth(mk){ const [y,m]=mk.split('-').map(Number); return n
 export function rate(settings,c){ const r=(settings.rates||{})[c]; return Number(r)>0 ? Number(r) : 1; }
 export function toUSD(settings, amount, cur){ return Number(amount||0)/rate(settings,cur||'USD'); }
 export function fmt(settings, usd){ const c=settings.base||'USD'; const v=usd*rate(settings,c); const dec=c==='LBP'?0:(Math.abs(v)%1<0.005?0:2); const n=v.toLocaleString('en-US',{minimumFractionDigits:dec,maximumFractionDigits:dec}); return (c==='USD'?'$':c==='LBP'?'L.L. ':c==='EUR'?'€':c==='AED'?'AED ':c+' ')+n; }
+export function fmtAmount(amount, c){ const dec=c==='LBP'?0:(Math.abs(amount)%1<0.005?0:2); const n=Number(amount||0).toLocaleString('en-US',{minimumFractionDigits:dec,maximumFractionDigits:dec}); return (c==='USD'?'$':c==='LBP'?'L.L. ':c==='EUR'?'€':c==='AED'?'AED ':c+' ')+n; }
 export function newId(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
 export function memberName(settings, name){ if(!name) return null; const i=(settings.members||[]).findIndex(m=>m.toLowerCase()===String(name).toLowerCase()); return i>=0 ? settings.members[i] : null; }
 
