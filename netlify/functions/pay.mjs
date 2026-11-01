@@ -1,6 +1,7 @@
 // Apple Pay hand-off: the iPhone "Transaction" automation posts merchant, amount and card here.
 // GET or POST (form or JSON) /pay?key=…&by=Rudy&merchant=…&amount=…&card=…
-import { HttpError, checkAuth, text, getSettings, getMonth, parseNote, saveExpenses, todayIn, fmt, memberName, guessTag, CURRENCIES } from "../lib/ledger.mjs";
+import { HttpError, checkAuth, text, getSettings, getMonth, getAccounts, parseNote, saveExpenses, todayIn, fmt, memberName, guessTag, CURRENCIES } from "../lib/ledger.mjs";
+import { matchCardAcc } from "../lib/flow.mjs";
 
 export const config = { path: "/pay" };
 
@@ -48,7 +49,8 @@ export default async (req) => {
     try{ const r=await parseNote(settings, note, today); items=r.items; }catch(e){ items=null; }
     if(!items||!items.length||!(items[0].amount>0)) items=[{amount:money.amount, currency:money.currency, description: merchant||'Card payment', tag:guessTag(merchant), date:today, by:null, note:null}];
     // trust the card's own amount and currency over the model's reading
-    items=[{...items[0], amount:money.amount, currency:CURRENCIES.includes(money.currency)?money.currency:settings.base, by:items[0].by||null, note: card? 'Apple Pay · '+card : 'Apple Pay', raw: merchant+'|'+money.amount+'|'+money.currency}];
+    const cardAcc=matchCardAcc(await getAccounts(), {last4:null, owner:who});
+    items=[{...items[0], kind:'expense', amount:money.amount, currency:CURRENCIES.includes(money.currency)?money.currency:settings.base, by:items[0].by||null, note: card? 'Apple Pay · '+card : 'Apple Pay', from: cardAcc? cardAcc.id : null, raw: merchant+'|'+money.amount+'|'+money.currency}];
     const saved=await saveExpenses(settings, items, {by:who, source:'applepay'});
     const s=saved[0];
     return text(`Added ${fmt(settings, s.usd)}, ${s.desc}, ${s.tag}${s.by?' for '+s.by:''}.`);

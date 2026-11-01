@@ -3,7 +3,7 @@ import { getStore } from "@netlify/blobs";
 
 export const TAGS = ['Groceries','Dining','Coffee','Transport','Fuel','Kids','School','Health','Pharmacy','Home','Utilities','Shopping','Clothes','Beauty','Entertainment','Travel','Gifts','Pets','Fees','Other'];
 export const CURRENCIES = ['USD','LBP','EUR','AED'];
-export const DEFAULT_SETTINGS = { members:['Rudy','Aya'], people:['Noah'], base:'USD', rates:{USD:1, LBP:89500, EUR:0.92, AED:3.6725}, budget:null, timezone:'Asia/Beirut', goldPrice:null };
+export const DEFAULT_SETTINGS = { members:['Rudy','Aya'], people:['Noah'], base:'USD', rates:{USD:1, LBP:89500, EUR:0.92, AED:3.6725}, budget:null, timezone:'Asia/Beirut', goldPrice:null, cashRules:['ATM','Cash Withdrawal','Careem Deliveries'], defaultPaid:{} };
 export const ACCOUNT_TYPES = ['cash','bank','savings','investment','gold','loan','card'];
 export const LIABILITY_TYPES = ['loan','card'];
 
@@ -84,7 +84,8 @@ export async function applyAvailable(settings, {last4, owner, available, currenc
 /** Keep one net-worth point per day so the Wealth tab can draw a history line. */
 export async function recordSnapshot(settings, accounts, today){
   const {assets,debts}=netWorth(settings, accounts);
-  const pts=(await getNetworthPoints()).filter(p=>p.date!==today); pts.push({date:today, assets:Math.round(assets), debts:Math.round(debts)});
+  const flow=accounts.filter(a=>a.active!==false && ['cash','bank','savings','card'].includes(a.type)).reduce((t,a)=>t+(a.type==='card'? -toUSD(settings,a.amount,a.currency) : toUSD(settings,a.amount,a.currency)),0);
+  const pts=(await getNetworthPoints()).filter(p=>p.date!==today); pts.push({date:today, assets:Math.round(assets), debts:Math.round(debts), flow:Math.round(flow)});
   pts.sort((a,b)=>a.date<b.date?-1:1); await writeJSON('networth', {points: pts.slice(-400)});
   return pts;
 }
@@ -146,7 +147,18 @@ export function parseLocal(settings, text, today){
   let date=today; if(/\byesterday\b/.test(t)){ const d=new Date(today+'T12:00:00Z'); d.setUTCDate(d.getUTCDate()-1); date=d.toISOString().slice(0,10); desc=desc.replace(/yesterday/ig,'').trim(); }
   const tag=guessTag(t);
   desc=desc? desc.charAt(0).toUpperCase()+desc.slice(1) : tag;
-  return [{amount: amount==null?0:amount, currency, description:desc, tag, date, by, note:null}];
+  // a transfer between the household's own accounts
+  if(/\b(moved|move|transfer(?:red)?|withdrew|withdraw|withdrawal|deposit(?:ed)?|paid (?:the |my )?(?:credit )?card|card payment|to savings)\b/.test(t)){
+    const pick=w=>/\bsavings?\b/.test(w)?'savings':/\bcard\b/.test(w)?'card':/\bcash\b/.test(w)?'cash':/\bbank|account\b/.test(w)?'bank':null;
+    let from=null, to=null; const mFrom=t.match(/\bfrom\s+(?:the |my )?(\w+)/), mTo=t.match(/\b(?:to|into)\s+(?:the |my )?(\w+)/);
+    if(mFrom) from=pick(mFrom[1]); if(mTo) to=pick(mTo[1]);
+    if(/withdr/.test(t)){ from=from||'bank'; to=to||'cash'; } else if(/deposit/.test(t)){ from=from||'cash'; to=to||'bank'; } else if(/card/.test(t)){ from=from||'bank'; to=to||'card'; } else if(/savings/.test(t)){ from=from||'bank'; to=to||'savings'; }
+    const label = to==='card'?'Credit card payment' : to==='cash'?'Cash withdrawal' : to==='savings'?'To savings' : 'Transfer';
+    return [{kind:'transfer', from:from||'bank', to:to||'cash', amount: amount==null?0:amount, currency, description:label, tag:'Other', date, by, note:null, paidWith:null}];
+  }
+  // how it was paid, when said
+  const paidWith = /\b(by|with|on|using)\s+(?:the |my )?card\b/.test(t)? 'card' : /\bcash\b/.test(t)? 'cash' : /\b(from|by|with)\s+(?:the |my )?bank\b/.test(t)? 'bank' : null;
+  return [{kind:'expense', paidWith, from:null, to:null, amount: amount==null?0:amount, currency, description:desc.replace(/\b(cash|by card|with card|card)\b/ig,'').replace(/\s+/g,' ').trim()||tag, tag, date, by, note:null}];
 }
 
 // ---------- Claude ----------
@@ -167,14 +179,19 @@ export async function parseWithClaude(settings, textIn, today){
   const system = `You turn one short spoken or typed note into expense records for a household ledger. Reply with only a JSON array of one or more objects (most notes are exactly one expense). No prose, no code fences.
 Today: ${today} (${weekdayIn(settings.timezone)}). Household members: ${settings.members.join(', ')}. Default currency: ${settings.base}. Other currencies in use: LBP (Lebanese lira; people say "lira", "L.L.", "500 thousand", "2 million" meaning lira), EUR, and AED (UAE dirhams; "dirhams", "AED").
 Tags, pick exactly one per expense: ${TAGS.join(', ')}.
-Object shape: {"amount": number, "currency": "USD"|"LBP"|"EUR"|"AED", "description": string, "tag": string, "date": "YYYY-MM-DD", "by": string|null, "note": string|null}
+Object shape: {"kind": "expense"|"transfer", "amount": number, "currency": "USD"|"LBP"|"EUR"|"AED", "description": string, "tag": string, "date": "YYYY-MM-DD", "by": string|null, "note": string|null, "paidWith": "cash"|"card"|"bank"|null, "from": "cash"|"bank"|"savings"|"card"|null, "to": "cash"|"bank"|"savings"|"card"|null}
+kind is "transfer" when money moved between the household's own accounts rather than being spent: withdrew cash / took out money (bank→cash), paid the credit card or card bill (bank→card), moved to savings (bank→savings), deposited cash (cash→bank); then set from and to, and description like "Cash withdrawal" or "Credit card payment". Otherwise kind is "expense" and paidWith is "cash", "card" or "bank" only when the note says how it was paid ("cash", "by card", "with the card", "from the bank"), else null.
 Rules: amount is the number spent (spoken numbers like "forty five" become 45; "1.2k" is 1200; "500 thousand lira" is 500000 LBP); the note may start with filler like "add to my expenses", ignore it; description is 2-6 words saying what or where, Title Case, with no amount or currency in it; date is today unless the note says otherwise (yesterday, last Tuesday, on the 3rd); by is a member name only when the note says who paid, else null; note keeps any leftover detail, else null. If no amount can be found, use 0.`;
   const res = await claudeMessage({ model: parseModel(), system, max_tokens: 400, messages:[{role:'user', content:`Note: """${String(textIn).replace(/"""/g,'"')}"""`}] });
   const data = await res.json();
   const out = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
   const m = out.match(/\[[\s\S]*\]|\{[\s\S]*\}/); if(!m) throw new HttpError(502,'Claude did not return JSON.');
   let parsed = JSON.parse(m[0]); if(!Array.isArray(parsed)) parsed=[parsed];
+  const AT=['cash','bank','savings','card'];
   return parsed.map(o=>({
+    kind: o.kind==='transfer' ? 'transfer' : 'expense',
+    paidWith: AT.includes(o.paidWith)? o.paidWith : null,
+    from: AT.includes(o.from)? o.from : null, to: AT.includes(o.to)? o.to : null,
     amount: Math.abs(Number(o.amount))||0,
     currency: CURRENCIES.includes(String(o.currency||'').toUpperCase())? String(o.currency).toUpperCase() : settings.base,
     description: String(o.description||'').trim().slice(0,80) || 'Expense',
@@ -197,7 +214,7 @@ export async function saveExpenses(settings, items, {by, source}){
   const saved=[]; const byMonth={};
   for(const p of items){
     const date = p.date; const mk=date.slice(0,7); const cur=p.currency||settings.base;
-    const doc = { id:newId(), amount:Number(p.amount)||0, currency:cur, usd:toUSD(settings,p.amount,cur), desc:p.description||p.desc||'Expense', tag:TAGS.includes(p.tag)?p.tag:'Other', by:p.by||by||'', date, month:mk, ts:Date.now(), source:source||'text', note:p.note||null, ...(p.raw? {raw:String(p.raw).slice(0,200)} : {}) };
+    const doc = { id:newId(), amount:Number(p.amount)||0, currency:cur, usd:toUSD(settings,p.amount,cur), desc:p.description||p.desc||'Expense', tag:TAGS.includes(p.tag)?p.tag:'Other', by:p.by||by||'', date, month:mk, ts:Date.now(), source:source||'text', note:p.note||null, from:p.from||null, ...(p.raw? {raw:String(p.raw).slice(0,200)} : {}) };
     (byMonth[mk]=byMonth[mk]||[]).push(doc); saved.push(doc);
   }
   for(const [mk,docs] of Object.entries(byMonth)){ await mutateList('months/'+mk, items=>items.concat(docs)); }
