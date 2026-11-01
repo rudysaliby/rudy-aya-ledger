@@ -39,8 +39,9 @@ export default async (req) => {
     if(!(money.amount>0)) return text("No amount received.", 400);
     const today=todayIn(settings.timezone); const mk=today.slice(0,7);
     // ignore a repeat of the same transaction within 10 minutes (Wallet can fire more than once)
-    const recent=(await getMonth(mk)).filter(e=>e.source==='applepay' && e.raw && e.raw===merchant+'|'+money.amount+'|'+money.currency && Date.now()-e.ts<10*60*1000);
-    if(recent.length) return text('Already logged.');
+    // ignore a repeat of the same payment within 10 minutes (Wallet firing twice, or the bank's SMS for the same purchase)
+    const dup=(await getMonth(mk)).some(e=>Math.abs(e.amount-money.amount)<0.005 && e.currency===money.currency && Date.now()-e.ts<10*60*1000);
+    if(dup) return text('Already logged.');
     const who=memberName(settings, by)||String(by||'').slice(0,40);
     const note=`${money.currency} ${money.amount} at ${merchant||'card payment'}`;
     let items;
