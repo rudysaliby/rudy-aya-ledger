@@ -1,7 +1,7 @@
 // Bank SMS hand-off: the iPhone "Message" automation posts the alert text here.
 // Every alert becomes a movement: an expense from an account, a transfer between accounts, income landing, or a balance reading.
-import { HttpError, checkAuth, text, getSettings, getMonth, getAccounts, getIncome, saveExpenses, todayIn, weekdayIn, fmt, fmtAmount, memberName, guessTag, claudeMessage, parseModel, toUSD, TAGS, CURRENCIES } from "../lib/ledger.mjs";
-import { saveMove, getMoves, matchBank, matchCardAcc, accountOfType, isCashOut, applyReading } from "../lib/flow.mjs";
+import { HttpError, checkAuth, text, getSettings, getMonth, getAccounts, getIncome, saveExpenses, todayIn, weekdayIn, fmt, fmtAmount, memberName, guessTag, claudeMessage, parseModel, toUSD, rate, TAGS, CURRENCIES } from "../lib/ledger.mjs";
+import { saveMove, getMoves, matchBank, matchCardAcc, accountOfType, isCashOut, applyReading, applyCardPayment, withSync } from "../lib/flow.mjs";
 
 export const config = { path: "/sms" };
 
@@ -11,7 +11,7 @@ Today: ${today} (${weekdayIn(settings.timezone)}). Currencies in use: USD, LBP (
 Tags, pick exactly one for purchases: ${TAGS.join(', ')}.
 Shape: {"kind": "purchase"|"withdrawal"|"credit_in"|"card_payment"|"fee"|"refund"|"declined"|"otp"|"other", "amount": number, "currency": "USD"|"LBP"|"EUR"|"AED", "account": "card"|"bank"|null, "card_last4": string|null, "account_mask": string|null, "merchant": string, "description": string, "tag": string, "date": "YYYY-MM-DD", "available": number|null, "available_kind": "limit"|"balance"|null, "available_currency": "USD"|"LBP"|"EUR"|"AED"|null}
 How to read it:
-- account is "card" when the alert is about a credit card ("Your Credit Card ending …", "available limit"); "bank" when it is about a current/savings account (an account number like 032-401***-001, "available balance", "Purchase from <account> … by Card Ending", "TT Payment to <account>").
+- account is the account whose balance the alert reports: "card" when it ends with "available limit" (a credit card); "bank" when it ends with "available balance" or names an account number like 032-401***-001 (a current/savings account), even if the text mentions a credit card as the payee ("Payment to Credit Card ending 9821 from 032-401***-001 … available balance" is account "bank", kind "card_payment").
 - kind: "purchase" = money spent at a merchant (a credit-card use, or a debit "Purchase from <account> … AED 123.45-"); "withdrawal" = ATM / cash withdrawal; "credit_in" = money received into the account (an amount with a trailing "+", "TT Payment to <account>", salary, transfer in); "card_payment" = a payment to or received on a credit card; "fee" = bank fee, interest, charges; "refund" = reversal/refund; "declined", "otp" (one-time code), "other" (balance notice, promotions, reminders).
 - amount is the transaction amount in its own currency (a credit card used for LBP 122,950,000.00 has amount 122950000 and currency LBP even if the available limit is in AED). Never use the available balance or limit as the amount.
 - available is the figure after "Your available limit is" (available_kind "limit", a credit card) or "Your available balance is" (available_kind "balance", a bank account), with its currency; null if absent.
@@ -32,7 +32,7 @@ function readAlertLocal(sms, today){
   const last4=(sms.match(/(?:ending with|Card Ending with)\s*\**\s*(\d{4})\b/i)||[])[1]||null;
   const mask=(sms.match(/\b(\d{3}-\d{3}\*+-\d{3})\b/)||[])[1]||null;
   const d=sms.match(/\b(\d{2})\/(\d{2})\/(\d{4})\b/); const date=d? `${d[3]}-${d[2]}-${d[1]}` : today;
-  const isCard=/credit card|available limit/i.test(sms); const account=isCard?'card':(mask||/available balance/i.test(sms)?'bank':null);
+  const account = av? (av[1].toLowerCase()==='limit'?'card':'bank') : (/your credit card/i.test(sms)? 'card' : (mask? 'bank' : null));
   let kind='other', merchant='';
   if(/code|OTP|password/i.test(sms)) kind='otp';
   else if(/declined/i.test(sms)) kind='declined';
@@ -69,7 +69,7 @@ export default async (req) => {
     const date=/^\d{4}-\d{2}-\d{2}$/.test(a.date||'')? a.date : today; const mk=date.slice(0,7);
     const accounts=await getAccounts();
     // which account does this alert talk about?
-    const isCard = a.account==='card' || a.available_kind==='limit';
+    const isCard = a.available_kind==='limit' || (a.available_kind!=='balance' && a.account==='card');
     const acc = isCard ? matchCardAcc(accounts,{last4:a.card_last4, owner:who}) : matchBank(accounts,{mask:a.account_mask, last4:a.card_last4, owner:who});
     const accName = acc? acc.name : (isCard?'credit card':'bank account');
     const notes=[];
@@ -82,11 +82,11 @@ export default async (req) => {
       const raw='sms|'+kind+'|'+String(a.merchant||'').slice(0,60)+'|'+amount+'|'+currency;
       if(kind==='purchase' || kind==='fee'){
         const items=[{amount, currency, description:String(a.description||a.merchant||'Card payment').slice(0,80), tag: kind==='fee'?'Fees':(TAGS.includes(a.tag)?a.tag:guessTag(String(a.merchant||''))), date, by:null, note: isCard? 'Card alert' : 'Bank alert', from: acc? acc.id : null, raw}];
-        const s=(await saveExpenses(settings, items, {by:who, source:'sms'}))[0];
+        const s=(await withSync(settings, today, [acc?acc.id:null], ()=>saveExpenses(settings, items, {by:who, source:'sms'})))[0];
         headline=`Added ${fmt(settings, s.usd)}, ${s.desc}, ${s.tag}${s.by?' for '+s.by:''}${acc?' from '+acc.name:''}.`;
       } else if(kind==='withdrawal'){
         const cash=await accountOfType(settings, accounts, 'cash', who, {create:true, currency:'USD'});
-        const m=await saveMove(settings, {kind:'transfer', fromAcc: acc? acc.id : null, toAcc: cash? cash.id : null, amount, currency, desc:'Cash withdrawal'+(a.merchant? ' via '+String(a.description||a.merchant).slice(0,30):''), date, raw}, {by:who, source:'sms'});
+        const m=await withSync(settings, today, [acc?acc.id:null, cash?cash.id:null], ()=>saveMove(settings, {kind:'transfer', fromAcc: acc? acc.id : null, toAcc: cash? cash.id : null, amount, currency, desc:'Cash withdrawal'+(a.merchant? ' via '+String(a.description||a.merchant).slice(0,30):''), date, raw}, {by:who, source:'sms'}));
         headline=`Moved ${fmt(settings, m.usd)} from ${accName} to ${cash? cash.name : 'cash'}.`;
       } else if(kind==='credit_in'){
         // salary or other money in: link to a planned income line when the amount is close (±20%)
@@ -94,14 +94,15 @@ export default async (req) => {
         const cands=income.filter(i=>i.active!==false && i.period==='monthly' && (!i.by || !who || String(i.by).toLowerCase()===String(who).toLowerCase()));
         const hit=cands.find(i=>{ const u=toUSD(settings,i.amount,i.currency); return u>0 && Math.abs(usd-u)/u<=0.2; });
         const already = hit && recentMv.some(m=>m.kind==='income' && m.incomeId===hit.id);
-        const m=await saveMove(settings, {kind: hit? 'income' : 'adjust', fromAcc:null, toAcc: acc? acc.id : null, amount, currency, desc: hit? (already? hit.name+' (again)' : hit.name) : 'Money received'+(a.description&&a.description!=='Money received'? ' · '+String(a.description).slice(0,40):''), date, incomeId: hit? hit.id : null, raw}, {by:who, source:'sms'});
+        const m=await withSync(settings, today, [acc?acc.id:null], ()=>saveMove(settings, {kind: hit? 'income' : 'adjust', fromAcc:null, toAcc: acc? acc.id : null, amount, currency, desc: hit? (already? hit.name+' (again)' : hit.name) : 'Money received'+(a.description&&a.description!=='Money received'? ' · '+String(a.description).slice(0,40):''), date, incomeId: hit? hit.id : null, raw}, {by:who, source:'sms'}));
         headline= hit? `${hit.name} received: ${fmt(settings, m.usd)} into ${accName}.` : `${fmt(settings, m.usd)} received into ${accName} (not matched to a salary; it counts as an adjustment).`;
       } else if(kind==='card_payment'){
-        const card = isCard? acc : matchCardAcc(accounts,{last4:null, owner:who}); const bank = isCard? matchBank(accounts,{owner:who}) : acc;
-        const m=await saveMove(settings, {kind:'transfer', fromAcc: bank? bank.id : null, toAcc: card? card.id : null, amount, currency, desc:'Credit card payment', date, raw}, {by:who, source:'sms'});
+        const card = isCard? acc : matchCardAcc(accounts,{last4:a.card_last4, owner:who}); const bank = isCard? matchBank(accounts,{owner:who}) : acc;
+        const m=await withSync(settings, today, [bank?bank.id:null, card?card.id:null], ()=>saveMove(settings, {kind:'transfer', fromAcc: bank? bank.id : null, toAcc: card? card.id : null, amount, currency, desc:'Credit card payment', date, raw}, {by:who, source:'sms'}));
+        if(card){ try{ await applyCardPayment(card.id, toUSD(settings, amount, currency)*rate(settings, card.currency)); }catch(e){} }
         headline=`Card payment of ${fmt(settings, m.usd)} recorded${bank?' from '+bank.name:''}${card?' to '+card.name:''}.`;
       } else if(kind==='refund'){
-        const m=await saveMove(settings, {kind:'refund', fromAcc:null, toAcc: acc? acc.id : null, amount, currency, desc:'Refund'+(a.description? ' · '+String(a.description).slice(0,40):''), date, raw}, {by:who, source:'sms'});
+        const m=await withSync(settings, today, [acc?acc.id:null], ()=>saveMove(settings, {kind:'refund', fromAcc:null, toAcc: acc? acc.id : null, amount, currency, desc:'Refund'+(a.description? ' · '+String(a.description).slice(0,40):''), date, raw}, {by:who, source:'sms'}));
         headline=`Refund of ${fmt(settings, m.usd)} into ${accName}.`;
       }
     } else if(dup) headline='Already logged.';

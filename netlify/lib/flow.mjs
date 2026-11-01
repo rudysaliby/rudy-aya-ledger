@@ -67,6 +67,26 @@ export async function confirmBalance(settings, id, actual, today, extra={}){
   await recordSnapshot(settings, items, today);
   return {account:updated, accounts:items, agree};
 }
+/**
+ * Run a write that touches `ids` and keep those accounts' balances in step with it:
+ * an account that agreed with the log before the write is moved to the new expected figure
+ * (cash drops when you spend cash, card debt drops when a payment is booked); a later reading confirms or raises a gap.
+ */
+export async function withSync(settings, today, ids, fn){
+  ids=(ids||[]).filter(Boolean);
+  const pre = ids.length? await reconcile(settings, await getAccounts(), today) : {};
+  const result = await fn();
+  if(ids.length){
+    const post=await reconcile(settings, await getAccounts(), today);
+    const upd=ids.filter(id=>pre[id] && pre[id].gap===0 && post[id] && post[id].gap!==0);
+    if(upd.length){
+      const now=Date.now();
+      const items=await mutateList('accounts', items=>items.map(a=>{ if(!upd.includes(a.id)) return a; const v=Math.round(post[a.id].expected*100)/100; const extra = a.type==='card' && Number(a.limit)>0 ? {available: Math.max(0, Math.round((Number(a.limit)-v)*100)/100)} : {}; return {...a, ...extra, amount:v, confirmed:{amount:v, date:today, ts:now}, updatedAt:today}; }));
+      await recordSnapshot(settings, items, today);
+    }
+  }
+  return result;
+}
 /** After a gap has been explained, move the baseline to the current actual figure. */
 export async function advanceBaseline(id, today){
   return mutateList('accounts', items=>items.map(a=> a.id===id ? {...a, confirmed:{amount:Number(a.amount)||0, date:today, ts:Date.now()}} : a));
@@ -108,6 +128,29 @@ export async function reconcile(settings, accounts, today, preloaded=null){
     out[a.id]={expected:Math.round(exp*100)/100, actual, gap, since: a.confirmed? a.confirmed.date : null, confirmed: !!a.confirmed, pending:n};
   }
   return out;
+}
+
+// ---------- credit-card cycle: statement amount due on the pay day, and charges since the statement ----------
+function nextDay(today, day){ const [y,m,d]=today.split('-').map(Number); const mk=(yy,mm)=>`${yy}-${String(mm).padStart(2,'0')}`; const dd=Math.min(day,28); if(d<=dd) return `${mk(y,m)}-${String(dd).padStart(2,'0')}`; const n=new Date(Date.UTC(y,m,1)); return `${mk(n.getUTCFullYear(),n.getUTCMonth()+1)}-${String(dd).padStart(2,'0')}`; }
+export function lastDay(today, day){ const [y,m,d]=today.split('-').map(Number); const mk=(yy,mm)=>`${yy}-${String(mm).padStart(2,'0')}`; const dd=Math.min(day,28); if(d>=dd) return `${mk(y,m)}-${String(dd).padStart(2,'0')}`; const n=new Date(Date.UTC(y,m-2,1)); return `${mk(n.getUTCFullYear(),n.getUTCMonth()+1)}-${String(dd).padStart(2,'0')}`; }
+/** On the statement day, freeze the card's debt as the next amount due (unless the user typed one for this cycle). */
+export async function rollStatements(settings, today){
+  const accounts=await getAccounts(); let changed=false;
+  const next=accounts.map(a=>{ if(a.type!=='card' || !a.statementDay) return a; const sd=lastDay(today, Number(a.statementDay)); if(a.statementSnap && a.statementSnap.date===sd) return a; changed=true; return {...a, statementSnap:{date:sd, amount:Number(a.amount)||0}, due:Number(a.amount)||0, dueSetBy:'statement'}; });
+  if(changed) await mutateList('accounts', items=>items.map(a=>{ const n=next.find(x=>x.id===a.id); return n && n!==a ? {...a, statementSnap:n.statementSnap, due:n.due, dueSetBy:n.dueSetBy} : a; }));
+  return changed? next : accounts;
+}
+/** A payment landed on the card: reduce what is due. */
+export async function applyCardPayment(cardId, amountInCardCur){
+  return mutateList('accounts', items=>items.map(a=> a.id===cardId ? {...a, due: Math.max(0, Math.round(((Number(a.due)||0)-amountInCardCur)*100)/100), lastPayment:{amount:amountInCardCur, ts:Date.now()}} : a));
+}
+/** Figures for the Wealth tab: due on the next pay day, and charges since the statement. */
+export function cardCycle(card, today){
+  const payDay=Number(card.payDay)||0; const due=Number(card.due)||0; const debt=Number(card.amount)||0;
+  let next = payDay? nextDay(today, payDay) : null;
+  // a payment already made for this cycle moves the date to next month
+  if(next && card.lastPayment && card.lastPayment.ts){ const paidOn=new Date(card.lastPayment.ts).toISOString().slice(0,10); const near=Math.abs((new Date(paidOn)-new Date(next))/86400000)<=5; if(near && due<=0.5){ const [y,m]=next.split('-').map(Number); const n=new Date(Date.UTC(y,m,1)); next=`${n.getUTCFullYear()}-${String(n.getUTCMonth()+1).padStart(2,'0')}-${String(Math.min(payDay,28)).padStart(2,'0')}`; } }
+  return { payDay, nextPayDate: next, due, sinceStatement: Math.max(0, Math.round((debt-due)*100)/100), statementDate: card.statementSnap? card.statementSnap.date : null };
 }
 
 /** Month check: income received vs planned, spent, expected change vs actual change in flow accounts. */

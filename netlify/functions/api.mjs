@@ -1,7 +1,7 @@
 // JSON API for the ledger app. All routes need the household key.
 import { HttpError, checkAuth, json, text, getSettings, getMonth, getRecurring, getIncome, incomeMonthlyUSD, getAccounts, getNetworthPoints, accountUSD, netWorth, recordSnapshot, ACCOUNT_TYPES, LIABILITY_TYPES, writeJSON, mutateList, listMonthKeys,
-  parseNote, saveExpenses, toUSD, todayIn, shiftMonth, monthStats, analysisPrompt, rangeAnalysisPrompt, claudeMessage, analysisModel, newId, TAGS, CURRENCIES, DEFAULT_SETTINGS } from "../lib/ledger.mjs";
-import { getMoves, saveMove, deleteMove, accountOfType, matchCardAcc, confirmBalance, advanceBaseline, reconcile, monthCheck, MOVE_KINDS } from "../lib/flow.mjs";
+  parseNote, saveExpenses, toUSD, rate, todayIn, shiftMonth, monthStats, analysisPrompt, rangeAnalysisPrompt, claudeMessage, analysisModel, newId, TAGS, CURRENCIES, DEFAULT_SETTINGS } from "../lib/ledger.mjs";
+import { getMoves, saveMove, deleteMove, accountOfType, matchCardAcc, confirmBalance, advanceBaseline, reconcile, monthCheck, rollStatements, applyCardPayment, cardCycle, lastDay, withSync, MOVE_KINDS } from "../lib/flow.mjs";
 
 /** Resolve "cash"/"bank"/"card"/"savings" for a member into an account id (creating a cash account on demand). */
 async function resolveAcc(settings, accounts, type, owner){ if(!type) return null; const a=await accountOfType(settings, accounts, type, owner, {create:true, currency: type==='cash'?'USD':settings.base}); return a? a.id : null; }
@@ -22,12 +22,14 @@ export default async (req) => {
     if(route==='state' && req.method==='GET'){
       const months=(url.searchParams.get('months')||'').split(',').filter(m=>/^\d{4}-\d{2}$/.test(m));
       const keys = months.length? months : (()=>{ const cm=today.slice(0,7); const a=[]; for(let i=5;i>=0;i--) a.push(shiftMonth(cm,-i)); return a; })();
-      const [recurring, income, accounts, networth, monthKeys, ...docs] = await Promise.all([getRecurring(), getIncome(), getAccounts(), getNetworthPoints(), listMonthKeys(), ...keys.map(k=>getMonth(k))]);
+      const [recurring, income, accounts0, networth, monthKeys, ...docs] = await Promise.all([getRecurring(), getIncome(), getAccounts(), getNetworthPoints(), listMonthKeys(), ...keys.map(k=>getMonth(k))]);
+      let accounts=accounts0; try{ accounts=await rollStatements(settings, today); }catch(e){}
+      const cycles={}; for(const a of accounts){ if(a.type==='card') cycles[a.id]=cardCycle(a, today); }
       const mv=await Promise.all(keys.map(k=>getMoves(k)));
       const out={}, moves={}; keys.forEach((k,i)=>{ out[k]=docs[i]; moves[k]=mv[i]; });
       let recon={}; try{ recon=await reconcile(settings, accounts, today, {months:out, moves}); }catch(e){}
       let check=null; try{ check=await monthCheck(settings, today.slice(0,7), accounts, networth, today); }catch(e){}
-      return json({settings, recurring, income, accounts, networth, recon, check, months:out, moves, monthKeys, today, serverTime:Date.now()});
+      return json({settings, recurring, income, accounts, cycles, networth, recon, check, months:out, moves, monthKeys, today, serverTime:Date.now()});
     }
     if(route==='month' && req.method==='GET'){
       const mk=url.searchParams.get('m'); if(!/^\d{4}-\d{2}$/.test(mk||'')) throw new HttpError(400,'Bad month');
@@ -46,13 +48,13 @@ export default async (req) => {
       const transfers=items.filter(i=>i.kind==='transfer' && i.amount>0); items=items.filter(i=>i.kind!=='transfer');
       const movesSaved=[];
       for(const t of transfers){ const owner=t.by||by; const fromAcc=await resolveAcc(settings, accounts, t.from||'bank', owner); const toAcc=await resolveAcc(settings, accounts, t.to||'cash', owner);
-        movesSaved.push(await saveMove(settings, {kind:'transfer', fromAcc, toAcc, amount:t.amount, currency:t.currency, desc:t.description||'Transfer', date:t.date}, {by:owner, source: body.source||'text'})); }
+        movesSaved.push(await withSync(settings, today, [fromAcc,toAcc], ()=>saveMove(settings, {kind:'transfer', fromAcc, toAcc, amount:t.amount, currency:t.currency, desc:t.description||'Transfer', date:t.date}, {by:owner, source: body.source||'text'}))); if(toAcc){ const card=accounts.find(a=>a.id===toAcc && a.type==='card'); if(card){ try{ await applyCardPayment(card.id, toUSD(settings,t.amount,t.currency)*rate(settings,card.currency)); }catch(e){} } } }
       if(!items.length && movesSaved.length) return json({saved:[], moves:movesSaved, via});
       const needsFix = items.length===1 && !(items[0].amount>0);
       if(needsFix) return json({saved:[], draft:{...items[0], by: items[0].by||by}, via});
       // which account paid: said in the note, else this member's default, else nothing
       for(const it of items){ if(it.from && accounts.some(a=>a.id===it.from)) continue; const owner=it.by||by; const want=it.paidWith || (settings.defaultPaid||{})[owner] || null; it.from = want? await resolveAcc(settings, accounts, want, owner) : null; }
-      const saved = await saveExpenses(settings, items, {by, source: body.source||(body.text?'text':'manual')});
+      const saved = await withSync(settings, today, items.map(i=>i.from), ()=>saveExpenses(settings, items, {by, source: body.source||(body.text?'text':'manual')}));
       return json({saved, moves:movesSaved, via});
     }
     if(route==='expense' && req.method==='PUT'){
@@ -66,7 +68,7 @@ export default async (req) => {
     }
     if(route==='expense' && req.method==='DELETE'){
       const {id, month}=body; if(!id || !/^\d{4}-\d{2}$/.test(month||'')) throw new HttpError(400,'Need id and month');
-      await mutateList('months/'+month, items=>items.filter(x=>x.id!==id)); return json({ok:true});
+      const ex=(await getMonth(month)).find(x=>x.id===id); await withSync(settings, today, ex? [ex.from] : [], ()=>mutateList('months/'+month, items=>items.filter(x=>x.id!==id))); return json({ok:true});
     }
     if(route==='expenses/delete' && req.method==='POST'){
       const list=Array.isArray(body.items)? body.items.filter(x=>x && x.id && /^\d{4}-\d{2}$/.test(x.month||'')).slice(0,500) : [];
@@ -78,10 +80,11 @@ export default async (req) => {
 
     // ---- moves (transfers, income landed, refunds, adjustments) ----
     if(route==='move' && req.method==='POST'){
-      const m=body.move||{}; const doc=await saveMove(settings, {id:m.id, kind:MOVE_KINDS.includes(m.kind)?m.kind:'transfer', fromAcc:m.fromAcc||null, toAcc:m.toAcc||null, amount:m.amount, currency:CURRENCIES.includes(m.currency)?m.currency:settings.base, desc:m.desc, date:/^\d{4}-\d{2}-\d{2}$/.test(m.date||'')?m.date:today, incomeId:m.incomeId||null, note:m.note, ts:m.ts}, {by:body.by||m.by||'', source:'manual'});
+      const m=body.move||{}; const doc=await withSync(settings, today, [m.fromAcc, m.toAcc], ()=>saveMove(settings, {id:m.id, kind:MOVE_KINDS.includes(m.kind)?m.kind:'transfer', fromAcc:m.fromAcc||null, toAcc:m.toAcc||null, amount:m.amount, currency:CURRENCIES.includes(m.currency)?m.currency:settings.base, desc:m.desc, date:/^\d{4}-\d{2}-\d{2}$/.test(m.date||'')?m.date:today, incomeId:m.incomeId||null, note:m.note, ts:m.ts}, {by:body.by||m.by||'', source:'manual'}));
+      if(doc.toAcc && !m.id){ const card=(await getAccounts()).find(a=>a.id===doc.toAcc && a.type==='card'); if(card){ try{ await applyCardPayment(card.id, doc.usd*rate(settings, card.currency)); }catch(e){} } }
       return json({saved:doc});
     }
-    if(route==='move' && req.method==='DELETE'){ const {id, month}=body; if(!id || !/^\d{4}-\d{2}$/.test(month||'')) throw new HttpError(400,'Need id and month'); await deleteMove(month, id); return json({ok:true}); }
+    if(route==='move' && req.method==='DELETE'){ const {id, month}=body; if(!id || !/^\d{4}-\d{2}$/.test(month||'')) throw new HttpError(400,'Need id and month'); const mv=(await getMoves(month)).find(x=>x.id===id); await withSync(settings, today, mv? [mv.fromAcc, mv.toAcc] : [], ()=>deleteMove(month, id)); return json({ok:true}); }
     // ---- account: confirm the actual balance, or explain a gap ----
     if(route==='account/confirm' && req.method==='POST'){
       const {id, amount}=body; if(!id) throw new HttpError(400,'Need id'); const accounts=await getAccounts(); const acc=accounts.find(a=>a.id===id); if(!acc) throw new HttpError(404,'No such account');
@@ -96,6 +99,7 @@ export default async (req) => {
       const liab=acc.type==='card'; const missingOut = liab? gap>0 : gap<0;   // money left the account that we never logged
       const amount=Math.abs(gap); const owner=acc.owner&&acc.owner!=='Joint'? acc.owner : (body.by||'');
       if(action==='withdrawal' && missingOut && !liab){ const cash=await accountOfType(settings, accounts, 'cash', owner, {create:true, currency:'USD'}); await saveMove(settings, {kind:'transfer', fromAcc:acc.id, toAcc:cash?cash.id:null, amount, currency:acc.currency, desc:'Cash withdrawal (reconciled)', date:today}, {by:owner, source:'resolve'}); }
+      else if(action==='withdrawal' && !missingOut && acc.type==='cash'){ const bank=await accountOfType(settings, accounts, 'bank', owner); await saveMove(settings, {kind:'transfer', fromAcc:bank?bank.id:null, toAcc:acc.id, amount, currency:acc.currency, desc:'Cash withdrawal (reconciled)', date:today}, {by:owner, source:'resolve'}); }
       else if(action==='expense' && missingOut){ await saveExpenses(settings, [{amount, currency:acc.currency, description: body.desc? String(body.desc).slice(0,80) : 'Untracked spending', tag: TAGS.includes(body.tag)? body.tag : 'Other', date:today, by:owner||null, note:'Added to explain a balance gap', from:acc.id}], {by:owner, source:'resolve'}); }
       else if(action==='fee' && missingOut){ await saveExpenses(settings, [{amount, currency:acc.currency, description:'Bank fees / interest', tag:'Fees', date:today, by:owner||null, note:'Added to explain a balance gap', from:acc.id}], {by:owner, source:'resolve'}); }
       else { // accept: book the difference as an adjustment so expected matches actual from here on
@@ -117,8 +121,9 @@ export default async (req) => {
     if(route==='account' && req.method==='POST'){
       const a=body.item||{}; const type=ACCOUNT_TYPES.includes(a.type)? a.type : 'bank';
       const prev=(await getAccounts()).find(x=>x.id===a.id)||null;
-      const doc={ id:a.id||newId(), name:String(a.name||'').slice(0,60)||'Account', type, owner:String(a.owner||'').slice(0,40), amount:Math.abs(Number(a.amount))||0, currency:CURRENCIES.includes(a.currency)?a.currency:settings.base, grams: type==='gold'? (Math.abs(Number(a.grams))||0) : null, limit: type==='card'? (Math.abs(Number(a.limit))||null) : null, available: type==='card' && a.available!=='' && a.available!=null ? Math.abs(Number(a.available))||0 : null, last4: a.last4? String(a.last4).replace(/\D/g,'').slice(-4)||null : null, mask: a.mask? String(a.mask).trim().slice(0,30)||null : null, note:a.note?String(a.note).slice(0,120):null, active:a.active!==false, updatedAt:today, ts:a.ts||Date.now(), confirmed: prev? prev.confirmed||null : null };
+      const doc={ id:a.id||newId(), name:String(a.name||'').slice(0,60)||'Account', type, owner:String(a.owner||'').slice(0,40), amount:Math.abs(Number(a.amount))||0, currency:CURRENCIES.includes(a.currency)?a.currency:settings.base, grams: type==='gold'? (Math.abs(Number(a.grams))||0) : null, limit: type==='card'? (Math.abs(Number(a.limit))||null) : null, available: type==='card' && a.available!=='' && a.available!=null ? Math.abs(Number(a.available))||0 : null, last4: a.last4? String(a.last4).replace(/\D/g,'').slice(-4)||null : null, mask: a.mask? String(a.mask).trim().slice(0,30)||null : null, payDay: type==='card'? (Math.min(28,Math.max(0,Number(a.payDay)||0))||null) : null, statementDay: type==='card'? (Math.min(28,Math.max(0,Number(a.statementDay)||0))||null) : null, due: type==='card' && a.due!=='' && a.due!=null ? Math.max(0,Number(a.due)||0) : (prev? prev.due??null : null), dueSetBy: type==='card' && a.due!=='' && a.due!=null && (!prev || Number(prev.due)!==Number(a.due)) ? 'manual' : (prev? prev.dueSetBy||null : null), statementSnap: prev? prev.statementSnap||null : null, lastPayment: prev? prev.lastPayment||null : null, note:a.note?String(a.note).slice(0,120):null, active:a.active!==false, updatedAt:today, ts:a.ts||Date.now(), confirmed: prev? prev.confirmed||null : null };
       if(type==='card' && doc.limit && doc.available!=null) doc.amount=Math.round((doc.limit-Math.min(doc.limit,doc.available))*100)/100;
+      if(type==='card' && doc.dueSetBy==='manual' && doc.statementDay) doc.statementSnap={date:lastDay(today, doc.statementDay), amount:doc.due, manual:true};
       const isFlow=['cash','bank','savings','card'].includes(type);
       if(isFlow && !prev) doc.confirmed={amount:doc.amount, date:today, ts:Date.now()};           // a new account starts with its balance as the baseline
       let items=await mutateList('accounts', items=>{ const i=items.findIndex(x=>x.id===doc.id); if(i>=0) items[i]=(prev? {...doc, amount:prev.amount} : doc); else items.push(doc); return items; });
