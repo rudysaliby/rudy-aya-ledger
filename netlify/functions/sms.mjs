@@ -1,7 +1,7 @@
 // Bank SMS hand-off: the iPhone "Message" automation posts the alert text here.
 // Every alert becomes a movement: an expense from an account, a transfer between accounts, income landing, or a balance reading.
-import { HttpError, checkAuth, text, getSettings, getMonth, getAccounts, getIncome, saveExpenses, todayIn, weekdayIn, fmt, fmtAmount, memberName, guessTag, claudeMessage, parseModel, toUSD, rate, TAGS, CURRENCIES } from "../lib/ledger.mjs";
-import { saveMove, getMoves, matchBank, matchCardAcc, accountOfType, isCashOut, applyReading, applyCardPayment, withSync } from "../lib/flow.mjs";
+import { HttpError, checkAuth, text, getSettings, getMonth, getAccounts, getIncome, saveExpenses, todayIn, weekdayIn, fmt, fmtAmount, memberName, guessTag, claudeMessage, parseModel, toUSD, TAGS, CURRENCIES } from "../lib/ledger.mjs";
+import { saveMove, getMoves, matchBank, matchCardAcc, accountOfType, isCashOut, applyReading, withSync } from "../lib/flow.mjs";
 
 export const config = { path: "/sms" };
 
@@ -99,7 +99,6 @@ export default async (req) => {
       } else if(kind==='card_payment'){
         const card = isCard? acc : matchCardAcc(accounts,{last4:a.card_last4, owner:who}); const bank = isCard? matchBank(accounts,{owner:who}) : acc;
         const m=await withSync(settings, today, [bank?bank.id:null, card?card.id:null], ()=>saveMove(settings, {kind:'transfer', fromAcc: bank? bank.id : null, toAcc: card? card.id : null, amount, currency, desc:'Credit card payment', date, raw}, {by:who, source:'sms'}));
-        if(card){ try{ await applyCardPayment(card.id, toUSD(settings, amount, currency)*rate(settings, card.currency)); }catch(e){} }
         headline=`Card payment of ${fmt(settings, m.usd)} recorded${bank?' from '+bank.name:''}${card?' to '+card.name:''}.`;
       } else if(kind==='refund'){
         const m=await withSync(settings, today, [acc?acc.id:null], ()=>saveMove(settings, {kind:'refund', fromAcc:null, toAcc: acc? acc.id : null, amount, currency, desc:'Refund'+(a.description? ' · '+String(a.description).slice(0,40):''), date, raw}, {by:who, source:'sms'}));

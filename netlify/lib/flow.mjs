@@ -147,31 +147,22 @@ export async function reconcile(settings, accounts, today, preloaded=null){
 }
 
 // ---------- credit-card cycle: statement amount due on the pay day, and charges since the statement ----------
-function nextDay(today, day){ const [y,m,d]=today.split('-').map(Number); const mk=(yy,mm)=>`${yy}-${String(mm).padStart(2,'0')}`; const dd=Math.min(day,28); if(d<=dd) return `${mk(y,m)}-${String(dd).padStart(2,'0')}`; const n=new Date(Date.UTC(y,m,1)); return `${mk(n.getUTCFullYear(),n.getUTCMonth()+1)}-${String(dd).padStart(2,'0')}`; }
-export function lastDay(today, day){ const [y,m,d]=today.split('-').map(Number); const mk=(yy,mm)=>`${yy}-${String(mm).padStart(2,'0')}`; const dd=Math.min(day,28); if(d>=dd) return `${mk(y,m)}-${String(dd).padStart(2,'0')}`; const n=new Date(Date.UTC(y,m-2,1)); return `${mk(n.getUTCFullYear(),n.getUTCMonth()+1)}-${String(dd).padStart(2,'0')}`; }
 /**
- * Housekeeping on every load: on the statement day freeze the card's debt as the next amount due (unless the user typed
- * one for this cycle), and give any flow account that still has no baseline one at its current balance.
+ * Housekeeping on every load: give any flow account that still has no baseline one at its current balance, and drop the
+ * retired statement-cycle fields from cards (a card now carries only its total debt: limit minus the available limit the
+ * bank reports; payments are transfers that bring it down, and the next card alert sets it exactly).
  */
 export async function rollStatements(settings, today){
-  const now=Date.now();
-  // what an account needs, computed from the copy at hand; applied inside the etag-checked write so nothing newer is overwritten
+  const now=Date.now(); const RETIRED=['payDay','statementDay','due','dueSetBy','statementSnap','lastPayment'];
   const patchFor=a=>{
     const p={};
     if(FLOW_TYPES.includes(a.type) && !a.confirmed) p.confirmed={amount:Number(a.amount)||0, date:today, ts:now};
-    if(a.type==='card' && a.statementDay){ const sd=lastDay(today, Number(a.statementDay)); if(!(a.statementSnap && a.statementSnap.date===sd)){ p.statementSnap={date:sd, amount:Number(a.amount)||0}; p.due=Number(a.amount)||0; p.dueSetBy='statement'; } }
+    if(RETIRED.some(k=>a[k]!=null)) p._strip=true;
     return Object.keys(p).length? p : null;
   };
   const accounts=await getAccounts();
   if(!accounts.some(patchFor)) return accounts;
-  return mutateList('accounts', items=>items.map(a=>{ const p=patchFor(a); return p? {...a, ...p} : a; }));
-}
-/** A payment landed on the card: reduce what is due (a negative amount puts a deleted payment back). */
-export async function applyCardPayment(cardId, amountInCardCur){
-  return mutateList('accounts', items=>items.map(a=>{ if(a.id!==cardId) return a;
-    const due=Math.max(0, Math.round(((Number(a.due)||0)-amountInCardCur)*100)/100);
-    const lastPayment = amountInCardCur>0 ? {amount:amountInCardCur, ts:Date.now()} : (a.lastPayment && Math.abs((a.lastPayment.amount||0)+amountInCardCur)<0.01 ? null : a.lastPayment||null);
-    return {...a, due, lastPayment}; }));
+  return mutateList('accounts', items=>items.map(a=>{ const p=patchFor(a); if(!p) return a; const n={...a, ...p}; delete n._strip; if(p._strip) for(const k of RETIRED) delete n[k]; return n; }));
 }
 /**
  * Fold duplicate auto-created "Cash in hand" accounts (same owner, pot and currency) into the oldest one: every expense
@@ -195,14 +186,6 @@ export async function mergeDuplicateCash(settings, today){
   });
   await recordSnapshot(settings, items, today);
   return gone.length;
-}
-/** Figures for the Wealth tab: due on the next pay day, and charges since the statement. */
-export function cardCycle(card, today){
-  const payDay=Number(card.payDay)||0; const due=Number(card.due)||0; const debt=Number(card.amount)||0;
-  let next = payDay? nextDay(today, payDay) : null;
-  // a payment already made for this cycle moves the date to next month
-  if(next && card.lastPayment && card.lastPayment.ts){ const paidOn=new Date(card.lastPayment.ts).toISOString().slice(0,10); const near=Math.abs((new Date(paidOn)-new Date(next))/86400000)<=5; if(near && due<=0.5){ const [y,m]=next.split('-').map(Number); const n=new Date(Date.UTC(y,m,1)); next=`${n.getUTCFullYear()}-${String(n.getUTCMonth()+1).padStart(2,'0')}-${String(Math.min(payDay,28)).padStart(2,'0')}`; } }
-  return { payDay, nextPayDate: next, due, sinceStatement: Math.max(0, Math.round((debt-due)*100)/100), statementDate: card.statementSnap? card.statementSnap.date : null };
 }
 
 /** Month check: income received vs planned, spent, expected change vs actual change in flow accounts. */

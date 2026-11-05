@@ -1,7 +1,7 @@
 // Booking parsed notes: expenses leave the account they were paid from, transfers move money between accounts.
 // Shared by the app (/api/expense), Siri (/siri) and Apple Pay (/pay) so every route links to the same accounts.
-import { getAccounts, saveExpenses, toUSD, rate } from "./ledger.mjs";
-import { saveMove, accountOfType, withSync, applyCardPayment } from "./flow.mjs";
+import { getAccounts, saveExpenses } from "./ledger.mjs";
+import { saveMove, accountOfType, withSync } from "./flow.mjs";
 
 const AT=['cash','bank','savings','card'];
 
@@ -25,8 +25,8 @@ export async function bookItems(settings, items, {by, source, today, accounts}={
   const moves=[];
   for(const t of transfers){
     const owner=t.by||by; const fromAcc=await resolveAcc(settings, accounts, t.from||'bank', owner); const toAcc=await resolveAcc(settings, accounts, t.to||'cash', owner);
+    // a transfer onto a credit card is a payment: withSync brings the debt down by the amount
     moves.push(await withSync(settings, today, [fromAcc,toAcc], ()=>saveMove(settings, {kind:'transfer', fromAcc, toAcc, amount:t.amount, currency:t.currency, desc:t.description||'Transfer', date:t.date}, {by:owner, source})));
-    const card=accounts.find(a=>a.id===toAcc && a.type==='card'); if(card){ try{ await applyCardPayment(card.id, toUSD(settings,t.amount,t.currency)*rate(settings,card.currency)); }catch(e){} }
   }
   if(!items.length) return {saved:[], moves, draft:null};
   if(items.length===1 && !(items[0].amount>0)) return {saved:[], moves, draft:{...items[0], by: items[0].by||by}};

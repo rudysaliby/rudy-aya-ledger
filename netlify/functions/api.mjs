@@ -1,7 +1,7 @@
 // JSON API for the ledger app. All routes need the household key.
 import { HttpError, checkAuth, json, text, getSettings, getMonth, getRecurring, getIncome, incomeMonthlyUSD, getAccounts, getNetworthPoints, accountUSD, netWorth, recordSnapshot, bucketOf, ACCOUNT_TYPES, LIABILITY_TYPES, writeJSON, mutateList, listMonthKeys,
-  parseNote, saveExpenses, toUSD, rate, todayIn, shiftMonth, monthStats, analysisPrompt, rangeAnalysisPrompt, claudeMessage, analysisModel, newId, TAGS, CURRENCIES, DEFAULT_SETTINGS } from "../lib/ledger.mjs";
-import { getMoves, saveMove, deleteMove, accountOfType, confirmBalance, advanceBaseline, reconcile, monthCheck, rollStatements, mergeDuplicateCash, applyCardPayment, cardCycle, lastDay, withSync, MOVE_KINDS } from "../lib/flow.mjs";
+  parseNote, saveExpenses, toUSD, todayIn, shiftMonth, monthStats, analysisPrompt, rangeAnalysisPrompt, claudeMessage, analysisModel, newId, TAGS, CURRENCIES, DEFAULT_SETTINGS } from "../lib/ledger.mjs";
+import { getMoves, saveMove, deleteMove, accountOfType, confirmBalance, advanceBaseline, reconcile, monthCheck, rollStatements, mergeDuplicateCash, withSync, MOVE_KINDS } from "../lib/flow.mjs";
 import { bookItems, resolveAcc } from "../lib/book.mjs";
 
 export const config = { path: "/api/*" };
@@ -24,12 +24,11 @@ export default async (req) => {
       let accounts=null; try{ await mergeDuplicateCash(settings, today); accounts=await rollStatements(settings, today); }catch(e){}
       const [recurring, income, accounts0, networth, monthKeys, ...docs] = await Promise.all([getRecurring(), getIncome(), accounts? Promise.resolve(accounts) : getAccounts(), getNetworthPoints(), listMonthKeys(), ...keys.map(k=>getMonth(k))]);
       accounts=accounts0;
-      const cycles={}; for(const a of accounts){ if(a.type==='card') cycles[a.id]=cardCycle(a, today); }
       const mv=await Promise.all(keys.map(k=>getMoves(k)));
       const out={}, moves={}; keys.forEach((k,i)=>{ out[k]=docs[i]; moves[k]=mv[i]; });
       let recon={}; try{ recon=await reconcile(settings, accounts, today, {months:out, moves}); }catch(e){}   // months not in the window are fetched as needed
       let check=null; try{ check=await monthCheck(settings, today.slice(0,7), accounts, networth, today); }catch(e){}
-      return json({settings, recurring, income, accounts, cycles, networth, recon, check, months:out, moves, monthKeys, today, serverTime:Date.now()});
+      return json({settings, recurring, income, accounts, networth, recon, check, months:out, moves, monthKeys, today, serverTime:Date.now()});
     }
     if(route==='month' && req.method==='GET'){
       const mk=url.searchParams.get('m'); if(!/^\d{4}-\d{2}$/.test(mk||'')) throw new HttpError(400,'Bad month');
@@ -80,14 +79,11 @@ export default async (req) => {
     // ---- moves (transfers, income landed, refunds, adjustments) ----
     if(route==='move' && req.method==='POST'){
       const m=body.move||{}; const doc=await withSync(settings, today, [m.fromAcc, m.toAcc], ()=>saveMove(settings, {id:m.id, kind:MOVE_KINDS.includes(m.kind)?m.kind:'transfer', fromAcc:m.fromAcc||null, toAcc:m.toAcc||null, amount:m.amount, currency:CURRENCIES.includes(m.currency)?m.currency:settings.base, desc:m.desc, date:/^\d{4}-\d{2}-\d{2}$/.test(m.date||'')?m.date:today, incomeId:m.incomeId||null, note:m.note, ts:m.ts}, {by:body.by||m.by||'', source:'manual'}));
-      if(doc.toAcc && !m.id){ const card=(await getAccounts()).find(a=>a.id===doc.toAcc && a.type==='card'); if(card){ try{ await applyCardPayment(card.id, doc.usd*rate(settings, card.currency)); }catch(e){} } }
       return json({saved:doc});
     }
     if(route==='move' && req.method==='DELETE'){
       const {id, month}=body; if(!id || !/^\d{4}-\d{2}$/.test(month||'')) throw new HttpError(400,'Need id and month');
       const mv=(await getMoves(month)).find(x=>x.id===id); await withSync(settings, today, mv? [mv.fromAcc, mv.toAcc] : [], ()=>deleteMove(month, id));
-      // a deleted card payment goes back onto what is due
-      if(mv && mv.kind==='transfer' && mv.toAcc){ const card=(await getAccounts()).find(a=>a.id===mv.toAcc && a.type==='card'); if(card){ try{ await applyCardPayment(card.id, -mv.usd*rate(settings, card.currency)); }catch(e){} } }
       return json({ok:true});
     }
     // ---- account: confirm the actual balance, or explain a gap ----
@@ -128,9 +124,8 @@ export default async (req) => {
     if(route==='account' && req.method==='POST'){
       const a=body.item||{}; const type=ACCOUNT_TYPES.includes(a.type)? a.type : 'bank';
       const prev=(await getAccounts()).find(x=>x.id===a.id)||null;
-      const doc={ id:a.id||newId(), name:String(a.name||'').slice(0,60)||'Account', type, owner:String(a.owner||'').slice(0,40), amount:Math.abs(Number(a.amount))||0, currency:CURRENCIES.includes(a.currency)?a.currency:settings.base, grams: type==='gold'? (Math.abs(Number(a.grams))||0) : null, limit: type==='card'? (Math.abs(Number(a.limit))||null) : null, available: type==='card' && a.available!=='' && a.available!=null ? Math.abs(Number(a.available))||0 : null, last4: a.last4? String(a.last4).replace(/\D/g,'').slice(-4)||null : null, mask: a.mask? String(a.mask).trim().slice(0,30)||null : null, bucket: a.bucket==='saved'||a.bucket==='spending'? a.bucket : (prev? prev.bucket||null : null), payDay: type==='card'? (Math.min(28,Math.max(0,Number(a.payDay)||0))||null) : null, statementDay: type==='card'? (Math.min(28,Math.max(0,Number(a.statementDay)||0))||null) : null, due: type==='card' && a.due!=='' && a.due!=null ? Math.max(0,Number(a.due)||0) : (prev? prev.due??null : null), dueSetBy: type==='card' && a.due!=='' && a.due!=null && (!prev || Number(prev.due)!==Number(a.due)) ? 'manual' : (prev? prev.dueSetBy||null : null), statementSnap: prev? prev.statementSnap||null : null, lastPayment: prev? prev.lastPayment||null : null, note:a.note?String(a.note).slice(0,120):null, active:a.active!==false, updatedAt:today, ts:a.ts||Date.now(), confirmed: prev? prev.confirmed||null : null };
+      const doc={ id:a.id||newId(), name:String(a.name||'').slice(0,60)||'Account', type, owner:String(a.owner||'').slice(0,40), amount:Math.abs(Number(a.amount))||0, currency:CURRENCIES.includes(a.currency)?a.currency:settings.base, grams: type==='gold'? (Math.abs(Number(a.grams))||0) : null, limit: type==='card'? (Math.abs(Number(a.limit))||null) : null, available: type==='card' && a.available!=='' && a.available!=null ? Math.abs(Number(a.available))||0 : null, last4: a.last4? String(a.last4).replace(/\D/g,'').slice(-4)||null : null, mask: a.mask? String(a.mask).trim().slice(0,30)||null : null, bucket: a.bucket==='saved'||a.bucket==='spending'? a.bucket : (prev? prev.bucket||null : null), note:a.note?String(a.note).slice(0,120):null, active:a.active!==false, updatedAt:today, ts:a.ts||Date.now(), confirmed: prev? prev.confirmed||null : null };
       if(type==='card' && doc.limit && doc.available!=null) doc.amount=Math.round((doc.limit-Math.min(doc.limit,doc.available))*100)/100;
-      if(type==='card' && doc.dueSetBy==='manual' && doc.statementDay) doc.statementSnap={date:lastDay(today, doc.statementDay), amount:doc.due, manual:true};
       const isFlow=['cash','bank','savings','card'].includes(type);
       if(isFlow && !prev) doc.confirmed={amount:doc.amount, date:today, ts:Date.now()};           // a new account starts with its balance as the baseline
       // on an edit, a flow account keeps its balance here and takes the typed figure as a reading below; other accounts simply take it
