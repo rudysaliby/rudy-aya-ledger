@@ -12,8 +12,11 @@ A shared household expense app for two iPhones. Installed to the home screen as 
 Static app in `public/` (served as Worker static assets), API in `src/worker.mjs` + `src/routes/`, data in one SQLite-backed
 Durable Object (`src/storage.mjs`). No database to create: the object is declared in `wrangler.toml`.
 
-Deploys happen from GitHub through Workers Builds (Workers & Pages → Create → Import a repository → this repo; deploy
-command `npx wrangler deploy`). Local run: `npm install && npm run dev` with a `.dev.vars` file holding the variables below.
+Deploys: either Workers Builds (Workers & Pages → Create → Import a repository → this repo; deploy command
+`npx wrangler deploy`), or a direct API deploy from the committed build — `npm run build` writes `dist/worker.js` (one
+bundled module) and `dist/assets.json` (the static-asset manifest with hashes), which a script can push through the
+Workers Script Upload and Assets Upload APIs. Local run: `npm install && npm run dev` with a `.dev.vars` file holding the
+variables below.
 
 Variables and secrets (Worker → Settings → Variables and Secrets):
 

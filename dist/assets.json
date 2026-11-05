@@ -1,0 +1,60 @@
+{
+ "built": "2026-11-05T14:17:44.870Z",
+ "files": {
+  "/apple-touch-icon-120x120-precomposed.png": {
+   "hash": "d9fe35d90f0289fc614b36b015c55540",
+   "size": 18650,
+   "type": "image/png"
+  },
+  "/apple-touch-icon-120x120.png": {
+   "hash": "d9fe35d90f0289fc614b36b015c55540",
+   "size": 18650,
+   "type": "image/png"
+  },
+  "/apple-touch-icon-precomposed.png": {
+   "hash": "d9fe35d90f0289fc614b36b015c55540",
+   "size": 18650,
+   "type": "image/png"
+  },
+  "/apple-touch-icon.png": {
+   "hash": "d9fe35d90f0289fc614b36b015c55540",
+   "size": 18650,
+   "type": "image/png"
+  },
+  "/icons/apple-touch-icon.png": {
+   "hash": "d9fe35d90f0289fc614b36b015c55540",
+   "size": 18650,
+   "type": "image/png"
+  },
+  "/icons/icon-192.png": {
+   "hash": "fd8e845ae5e75ad7e34b47513bde6517",
+   "size": 20477,
+   "type": "image/png"
+  },
+  "/icons/icon-512-rounded.png": {
+   "hash": "dad26c1670b27f077c1a18cce4121a3b",
+   "size": 105578,
+   "type": "image/png"
+  },
+  "/icons/icon-512.png": {
+   "hash": "bd902a3692521d62f4f873bb80dbf74e",
+   "size": 85114,
+   "type": "image/png"
+  },
+  "/index.html": {
+   "hash": "8a7a80d4051ab0fa5f5f2fd3a573ee92",
+   "size": 127433,
+   "type": "text/html; charset=utf-8"
+  },
+  "/manifest.webmanifest": {
+   "hash": "d5be73233c8dabb027e0553a797d396c",
+   "size": 738,
+   "type": "application/manifest+json"
+  },
+  "/sw.js": {
+   "hash": "ec481ffca2145142153fb4d3d406a1e5",
+   "size": 1781,
+   "type": "text/javascript; charset=utf-8"
+  }
+ }
+}

@@ -6,9 +6,11 @@
   "description": "Shared expense ledger for two phones: voice entry via Siri, bank-alert automation, Claude parsing, planning, wealth and AI analysis. Runs as a Cloudflare Worker.",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "build": "node scripts/build.mjs"
   },
   "devDependencies": {
+    "esbuild": "^0.24.0",
     "wrangler": "^4.40.0"
   },
   "engines": {
