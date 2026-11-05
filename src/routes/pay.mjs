@@ -3,7 +3,6 @@
 import { HttpError, checkAuth, text, getSettings, getMonth, getAccounts, parseNote, saveExpenses, todayIn, fmt, memberName, guessTag, CURRENCIES } from "../lib/ledger.mjs";
 import { matchCardAcc, withSync } from "../lib/flow.mjs";
 
-export const config = { path: "/pay" };
 
 /** "AED 84.00", "$12.50", "84,00 €", "USD 1,250" → {amount, currency} */
 function parseMoney(s, fallback){

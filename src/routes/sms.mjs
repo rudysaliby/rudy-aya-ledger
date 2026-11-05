@@ -3,7 +3,6 @@
 import { HttpError, checkAuth, text, getSettings, getMonth, getAccounts, getIncome, saveExpenses, todayIn, weekdayIn, fmt, fmtAmount, memberName, guessTag, claudeMessage, parseModel, toUSD, TAGS, CURRENCIES } from "../lib/ledger.mjs";
 import { saveMove, getMoves, matchBank, matchCardAcc, accountOfType, isCashOut, applyReading, withSync } from "../lib/flow.mjs";
 
-export const config = { path: "/sms" };
 
 async function readAlert(settings, sms, today){
   const system = `You read one bank or card alert SMS and extract what happened. Reply with only JSON, no prose, no code fences.

@@ -1,5 +1,6 @@
 // Shared backend logic: storage, auth, Claude calls, parsing and analysis.
-import { getStore } from "@netlify/blobs";
+import { store, envVar } from "../storage.mjs";
+export { store };
 
 export const TAGS = ['Groceries','Dining','Coffee','Transport','Fuel','Kids','School','Health','Pharmacy','Home','Utilities','Shopping','Clothes','Beauty','Entertainment','Travel','Gifts','Pets','Fees','Other'];
 export const CURRENCIES = ['USD','LBP','EUR','AED'];
@@ -32,8 +33,8 @@ const TAG_WORDS = {
 };
 
 // ---------- env & auth ----------
-function env(name){ try{ if(typeof Netlify!=='undefined' && Netlify.env) { const v=Netlify.env.get(name); if(v!=null) return v; } }catch(e){} return process.env[name]; }
-export function requireEnv(name){ const v=env(name); if(!v) throw new HttpError(500, `Server is missing the ${name} setting. Add it under Site configuration → Environment variables in Netlify, then redeploy.`); return v; }
+const env=envVar;
+export function requireEnv(name){ const v=env(name); if(!v) throw new HttpError(500, `Server is missing the ${name} setting. Add it under the Worker's Settings → Variables and Secrets in Cloudflare.`); return v; }
 export class HttpError extends Error { constructor(status, message){ super(message); this.status=status; } }
 export function checkAuth(req){
   const key = requireEnv('HOUSEHOLD_KEY');
@@ -45,7 +46,6 @@ export function json(data, status=200){ return new Response(JSON.stringify(data)
 export function text(s, status=200){ return new Response(s, {status, headers:{'content-type':'text/plain; charset=utf-8','cache-control':'no-store'}}); }
 
 // ---------- storage ----------
-export function store(){ return getStore({ name:'ledger', consistency:'strong' }); }
 export async function readJSON(key, fallback){ const v = await store().get(key, {type:'json'}); return v==null ? fallback : v; }
 export async function writeJSON(key, data){ await store().setJSON(key, data); }
 export async function getSettings(){ const s = await readJSON('settings', null); return s ? {...DEFAULT_SETTINGS, ...s, rates:{...DEFAULT_SETTINGS.rates, ...(s.rates||{})}} : {...DEFAULT_SETTINGS, rates:{...DEFAULT_SETTINGS.rates}}; }

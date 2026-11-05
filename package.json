@@ -1,11 +1,15 @@
 {
   "name": "household-ledger",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "Shared expense ledger for two phones: voice entry via Siri, Claude parsing, fixed-cost planning, dashboard and AI analysis.",
-  "dependencies": {
-    "@netlify/blobs": "^11.1.6"
+  "description": "Shared expense ledger for two phones: voice entry via Siri, bank-alert automation, Claude parsing, planning, wealth and AI analysis. Runs as a Cloudflare Worker.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.40.0"
   },
   "engines": {
     "node": ">=20"

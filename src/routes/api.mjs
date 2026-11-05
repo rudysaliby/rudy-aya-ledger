@@ -4,7 +4,6 @@ import { HttpError, checkAuth, json, text, getSettings, getMonth, getRecurring, 
 import { getMoves, saveMove, deleteMove, accountOfType, confirmBalance, advanceBaseline, reconcile, monthCheck, rollStatements, mergeDuplicateCash, withSync, MOVE_KINDS } from "../lib/flow.mjs";
 import { bookItems, resolveAcc } from "../lib/book.mjs";
 
-export const config = { path: "/api/*" };
 
 export default async (req) => {
   try{

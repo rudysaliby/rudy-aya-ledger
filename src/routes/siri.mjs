@@ -4,7 +4,6 @@
 import { HttpError, checkAuth, text, getSettings, parseNote, todayIn, fmt, memberName } from "../lib/ledger.mjs";
 import { bookItems } from "../lib/book.mjs";
 
-export const config = { path: "/siri" };
 
 export default async (req) => {
   try{

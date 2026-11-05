@@ -1,0 +1,24 @@
+# Cloudflare Worker: the app's static files from ./public, the API in src/worker.mjs, data in one Durable Object.
+name = "rudy-aya-ledger"
+main = "src/worker.mjs"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "LEDGER"
+class_name = "LedgerStore"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LedgerStore"]
+
+[vars]
+# First run on an empty store copies everything from here (same household key). Remove once the move is done.
+IMPORT_FROM = "https://rudy-aya-ledger.netlify.app"
+
+[observability]
+enabled = true
