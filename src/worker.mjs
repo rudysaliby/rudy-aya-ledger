@@ -1,4 +1,4 @@
-// Cloudflare Worker entry: static app from ./public (served by the platform), API routes here, data in one Durable Object.
+// Cloudflare Worker entry: API routes here, data in one Durable Object, the app's files served from the GitHub repo (static.mjs).
 import { DurableObject } from "cloudflare:workers";
 import { bindRuntime, store, envVar, defineLedgerStore } from "./storage.mjs";
 import { HttpError, checkAuth, json, text } from "./lib/ledger.mjs";
@@ -6,6 +6,7 @@ import api from "./routes/api.mjs";
 import sms from "./routes/sms.mjs";
 import pay from "./routes/pay.mjs";
 import siri from "./routes/siri.mjs";
+import { serveStatic, currentRelease, releaseInfo } from "./static.mjs";
 
 export const LedgerStore = defineLedgerStore(DurableObject);
 
@@ -61,13 +62,13 @@ export default {
     try{
       if(p === '/api/import' && req.method === 'POST'){ checkAuth(req); const b = await req.json().catch(()=>({})); const r = await importFrom(b.from || envVar('IMPORT_FROM'), {force:true}); return json(r); }
       if(p === '/api/export' && req.method === 'GET'){ checkAuth(req); const docs = await store().dump(); return new Response(JSON.stringify({exported:new Date().toISOString(), docs}), {headers:{'content-type':'application/json; charset=utf-8','content-disposition':'attachment; filename="ledger-export.json"','cache-control':'no-store'}}); }
-      if(p === '/api/health'){ return json({ok:true, platform:'cloudflare', importedFrom: (await store().get('meta/import', {type:'json'}))||null}); }
+      if(p === '/api/health'){ return json({ok:true, platform:'cloudflare', release: await releaseInfo(), importedFrom: (await store().get('meta/import', {type:'json'}))||null}); }
+      if(p === '/api/release' && req.method === 'POST'){ checkAuth(req); const rel = await currentRelease({refresh:true}); return json(rel ? {built: rel.built, files: Object.keys(rel.files).length} : {error:'GitHub unreachable'}, rel ? 200 : 502); }
       if(p.startsWith('/api/')){ await ensureImported(); return api(req); }
       if(p === '/sms') return sms(req);
       if(p === '/pay') return pay(req);
       if(p === '/siri') return siri(req);
-      if(env.ASSETS) return env.ASSETS.fetch(req);
-      return text('Not found', 404);
+      return serveStatic(req, ctx);
     }catch(e){
       const status = e instanceof HttpError ? e.status : 500;
       return json({error: e.message || 'Server error'}, status);
