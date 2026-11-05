@@ -6,7 +6,7 @@ import { readdirSync, readFileSync, statSync, writeFileSync, mkdirSync } from 'n
 import { join, extname, relative } from 'node:path';
 
 mkdirSync('dist', { recursive: true });
-await build({ entryPoints: ['src/worker.mjs'], bundle: true, format: 'esm', platform: 'browser', target: 'es2022', external: ['cloudflare:workers'], outfile: 'dist/worker.js', logLevel: 'warning', legalComments: 'none' });
+await build({ entryPoints: ['src/worker.mjs'], bundle: true, format: 'esm', platform: 'browser', target: 'es2022', external: ['cloudflare:workers'], outfile: 'dist/worker.js', minify: true, logLevel: 'warning', legalComments: 'none' });
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8', '.woff2': 'font/woff2' };
 const files = {};

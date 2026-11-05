@@ -1,7 +1,8 @@
 // Keeps the app shell cached so the icon opens instantly; data always comes from the network.
-const CACHE = 'ledger-shell-v19';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png', '/icons/icon-512-rounded.png'];
+const CACHE = 'ledger-shell-v20';
+const SHELL = ['/', '/index.html', '/app.css', '/app.js', '/sheets.js', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/apple-touch-icon.png'];
 const isShell = (p) => p === '/' || p === '/index.html';
+const isShellFile = (p) => ['/app.css', '/app.js', '/sheets.js'].includes(p);
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -19,6 +20,11 @@ self.addEventListener('fetch', (e) => {
       if (r.ok && isShell(url.pathname) && (r.headers.get('content-type') || '').includes('text/html')) { const copy = r.clone(); caches.open(CACHE).then((c) => c.put('/index.html', copy)); }
       return r;
     }).catch(() => caches.match('/index.html')));
+    return;
+  }
+  if (isShellFile(url.pathname)) {
+    // the page's own script and styles: network first so they always match the HTML that asked for them; cache for offline
+    e.respondWith(fetch(e.request).then((r) => { if (r.ok) { const copy = r.clone(); caches.open(CACHE).then((c) => c.put(url.pathname, copy)); } return r; }).catch(() => caches.match(url.pathname)));
     return;
   }
   e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request).then((r) => { if (r.ok) { const copy = r.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); } return r; })));
