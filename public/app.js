@@ -97,7 +97,7 @@ $('wGo').onclick=async()=>{
   const btn=$('wGo');
   if(!$('wKeyField').classList.contains('hide')){
     const k=$('w-key').value.trim(); if(!k) return; btn.disabled=true; btn.textContent='Checking…';
-    S.key=k; try{ await load(); if(!S.loaded) throw {message: S.key? 'Could not reach the ledger. Check the connection and try again.' : 'That key is not right. Check it in Netlify (HOUSEHOLD_KEY).'}; lsSet('key',k); $('wErr').classList.add('hide'); $('wKeyField').classList.add('hide'); $('wWhoField').classList.remove('hide'); $('wIntro').textContent='Expenses added from this phone are marked as theirs. Saying "Aya paid…" overrides it.';
+    S.key=k; try{ await load(); if(!S.loaded) throw {message: S.key? 'Could not reach the ledger. Check the connection and try again.' : 'That key is not right. It is the HOUSEHOLD_KEY secret on the Cloudflare Worker.'}; lsSet('key',k); $('wErr').classList.add('hide'); $('wKeyField').classList.add('hide'); $('wWhoField').classList.remove('hide'); $('wIntro').textContent='Expenses added from this phone are marked as theirs. Saying "Aya paid…" overrides it.';
       $('wWho').innerHTML=(S.settings.members||[]).map(m=>`<button type="button" class="chip ${m===S.who?'on':''}" data-chip="who" data-val="${esc(m)}" style="padding:12px 20px;font-size:16px"><i class="dot" style="background:${memberColor(m)}"></i>${esc(m)}</button>`).join(''); wireChips($('wWho')); btn.textContent="That's me";
     }catch(e){ S.key=''; $('wErr').textContent=e.message||'Wrong key'; $('wErr').classList.remove('hide'); btn.textContent='Continue'; }
     btn.disabled=false; return;

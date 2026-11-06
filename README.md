@@ -9,24 +9,25 @@ A shared household expense app for two iPhones. Installed to the home screen as 
 
 ## Hosting (Cloudflare Workers)
 
-Static app in `public/` (served as Worker static assets), API in `src/worker.mjs` + `src/routes/`, data in one SQLite-backed
-Durable Object (`src/storage.mjs`). No database to create: the object is declared in `wrangler.toml`.
-
-Deploys: either Workers Builds (Workers & Pages → Create → Import a repository → this repo; deploy command
-`npx wrangler deploy`), or a direct API deploy from the committed build — `npm run build` writes `dist/worker.js` (one
-bundled module) and `dist/assets.json` (the static-asset manifest with hashes), which a script can push through the
-Workers Script Upload and Assets Upload APIs. Local run: `npm install && npm run dev` with a `.dev.vars` file holding the
-variables below.
+- `src/worker.mjs` is the Worker: API routes, plus the app's files served from this repository (`src/static.mjs`).
+- Data lives in one SQLite-backed Durable Object (`src/storage.mjs`), declared in `wrangler.toml`; nothing to create by hand.
+- The app's files are not uploaded anywhere: the Worker reads `dist/assets.json` from the `main` branch every few minutes,
+  fetches any file whose hash it does not hold yet, verifies it, stores it and serves it. So `npm run build` + push is the
+  whole front-end deploy. `dist/worker.js` (the bundled server) is what gets uploaded when the server logic changes —
+  through `npx wrangler deploy`, Workers Builds, or the Script Upload API.
+- Local run: `npm install && npm run dev` with a `.dev.vars` file holding the variables below.
 
 Variables and secrets (Worker → Settings → Variables and Secrets):
 
 | Name | Purpose |
 |---|---|
-| `HOUSEHOLD_KEY` | The password both phones enter once. Also used by the Siri, Apple Pay and bank-alert shortcuts. Pick something long. |
-| `ANTHROPIC_API_KEY` | Claude API key for parsing and analysis. |
-| `PARSE_MODEL` | Optional. Default `claude-haiku-5-5`. |
-| `ANALYSIS_MODEL` | Optional. Default `claude-sonnet-5-5`. |
-| `IMPORT_FROM` | Optional (set in `wrangler.toml`). On the first load of an empty store, everything is copied from this previous address using the same household key. `POST /api/import` repeats it; `GET /api/export` downloads every document. |
+| `HOUSEHOLD_KEY` | Secret. The password both phones enter once; also used by the Siri, Apple Pay and bank-alert shortcuts. |
+| `ANTHROPIC_API_KEY` | Secret. Claude API key for parsing and analysis. |
+| `ASSET_REPO`, `ASSET_BRANCH` | Where the app files come from (`rudysaliby/rudy-aya-ledger`, `main`). |
+| `PARSE_MODEL`, `ANALYSIS_MODEL` | Optional. Defaults `claude-haiku-5-5` and `claude-sonnet-5-5`. |
+| `IMPORT_FROM` | Optional. On the first load of an empty store, copies everything from a previous address with the same key. |
+
+Backup: `GET /api/export` (with the key) downloads every data document; `POST /api/import` with that file restores it.
 
 ## Endpoints
 

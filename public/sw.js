@@ -13,7 +13,7 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin || e.request.method !== 'GET') return;          // fonts etc.: browser default
-  if (url.pathname.startsWith('/api/') || ['/siri', '/pay', '/sms'].includes(url.pathname) || url.pathname.startsWith('/.netlify/')) return; // never cache data
+  if (url.pathname.startsWith('/api/') || ['/siri', '/pay', '/sms'].includes(url.pathname)) return; // never cache data
   if (e.request.mode === 'navigate' || isShell(url.pathname)) {
     // network first; only a good HTML reply for the shell itself replaces the cached shell (never an error page or an endpoint's text)
     e.respondWith(fetch(e.request).then((r) => {

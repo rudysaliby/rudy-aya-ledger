@@ -1,5 +1,5 @@
 {
- "built": "2026-11-05T14:56:36.896Z",
+ "built": "2026-11-06T01:04:58.077Z",
  "files": {
   "/app.css": {
    "hash": "c1a602d630d155223eafaf95da6287a4",
@@ -7,8 +7,8 @@
    "type": "text/css; charset=utf-8"
   },
   "/app.js": {
-   "hash": "303501838d44e98db56eee850ba17049",
-   "size": 43844,
+   "hash": "9953111b4c25023f76a2a6b9fce2e638",
+   "size": 43864,
    "type": "text/javascript; charset=utf-8"
   },
   "/apple-touch-icon-120x120-precomposed.png": {
@@ -52,8 +52,8 @@
    "type": "image/svg+xml"
   },
   "/index.html": {
-   "hash": "ace8dc607f211014f439d342121e2b30",
-   "size": 10634,
+   "hash": "4134c87fb4b02c6c8f9f1cf826379b86",
+   "size": 10629,
    "type": "text/html; charset=utf-8"
   },
   "/manifest.webmanifest": {
@@ -67,8 +67,8 @@
    "type": "text/javascript; charset=utf-8"
   },
   "/sw.js": {
-   "hash": "a63cb20b697957ad445dedff23da407b",
-   "size": 2237,
+   "hash": "f3fbd8fd69007803a85ca7e00cf6cc2f",
+   "size": 2196,
    "type": "text/javascript; charset=utf-8"
   }
  }

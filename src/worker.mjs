@@ -10,8 +10,6 @@ import { serveStatic, currentRelease, releaseInfo } from "./static.mjs";
 
 export const LedgerStore = defineLedgerStore(DurableObject);
 
-const IMPORT_DOCS = ['settings', 'recurring', 'income', 'accounts', 'networth'];
-
 /**
  * First run on a fresh store: copy everything from the previous address (IMPORT_FROM) using the same household key, so
  * the move is invisible to the phones. Runs once; `meta/import` records what happened. Can be re-run with POST /api/import.
@@ -60,10 +58,15 @@ export default {
     bindRuntime({env});
     const url = new URL(req.url); const p = url.pathname;
     try{
-      if(p === '/api/import' && req.method === 'POST'){ checkAuth(req); const b = await req.json().catch(()=>({})); const r = await importFrom(b.from || envVar('IMPORT_FROM'), {force:true}); return json(r); }
-      if(p === '/api/export' && req.method === 'GET'){ checkAuth(req); const docs = await store().dump(); return new Response(JSON.stringify({exported:new Date().toISOString(), docs}), {headers:{'content-type':'application/json; charset=utf-8','content-disposition':'attachment; filename="ledger-export.json"','cache-control':'no-store'}}); }
-      if(p === '/api/health'){ return json({ok:true, platform:'cloudflare', release: await releaseInfo(), importedFrom: (await store().get('meta/import', {type:'json'}))||null}); }
-      if(p === '/api/release' && req.method === 'POST'){ checkAuth(req); const rel = await currentRelease({refresh:true}); return json(rel ? {built: rel.built, files: Object.keys(rel.files).length} : {error:'GitHub unreachable'}, rel ? 200 : 502); }
+      // backup and restore: /api/export downloads every data document; POST /api/import with that file's {docs} puts them back,
+      // or with {from: "https://old-address"} copies the data from a previous installation that uses the same household key
+      if(p === '/api/export' && req.method === 'GET'){ checkAuth(req); const docs = (await store().dump()).filter(d => !/^(files\/|release$|meta\/)/.test(d.key)); return new Response(JSON.stringify({exported:new Date().toISOString(), docs}), {headers:{'content-type':'application/json; charset=utf-8','content-disposition':'attachment; filename="ledger-export.json"','cache-control':'no-store'}}); }
+      if(p === '/api/import' && req.method === 'POST'){ checkAuth(req); const b = await req.json().catch(()=>({}));
+        if(Array.isArray(b.docs)){ const docs = b.docs.filter(d => d && typeof d.key === 'string' && typeof d.body === 'string' && !/^(files\/|release$|meta\/)/.test(d.key)); const n = await store().load(docs); return json({restored:n}); }
+        if(b.from){ const r = await importFrom(b.from, {force:true}); return json(r); }
+        throw new HttpError(400, 'Send {docs} from an export, or {from} with a previous address'); }
+      if(p === '/api/health'){ const meta = await store().get('meta/import', {type:'json'}); return json({ok:true, platform:'cloudflare', release: await releaseInfo(), import: meta ? meta.state : null}); }
+      if(p === '/api/release' && req.method === 'POST'){ checkAuth(req); const rel = await currentRelease(ctx, {refresh:true}); return json(rel ? {built: rel.built, files: Object.keys(rel.files).length} : {error:'GitHub unreachable'}, rel ? 200 : 502); }
       if(p.startsWith('/api/')){ await ensureImported(); return api(req); }
       if(p === '/sms') return sms(req);
       if(p === '/pay') return pay(req);

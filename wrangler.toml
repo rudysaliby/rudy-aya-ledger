@@ -13,8 +13,7 @@ tag = "v1"
 new_sqlite_classes = ["LedgerStore"]
 
 [vars]
-# First run on an empty store copies everything from here (same household key). Remove once the move is done.
-IMPORT_FROM = "https://rudy-aya-ledger.netlify.app"
+# IMPORT_FROM = "https://old-address" would copy everything from a previous address on the first load of an empty store
 # Where the app files come from (public/ in this repo, as described by dist/assets.json)
 ASSET_REPO = "rudysaliby/rudy-aya-ledger"
 ASSET_BRANCH = "main"
