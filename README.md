@@ -5,7 +5,7 @@ A shared household expense app for two iPhones. Installed to the home screen as 
 - **Add**: type or speak an expense ("45 groceries at Spinneys"). Claude turns it into amount, description, category and date.
 - **Siri**: "Hey Siri, add to my expenses" → speak → saved, with Siri reading back the result (set up once per phone from Settings in the app).
 - **Plan**: subscriptions, salaries and bills, monthly or yearly (yearly spread per month in all totals).
-- **Insights**: monthly dashboard, budget, charts and an AI read of overspending with concrete suggestions.
+- **Insights**: a dashboard for one month, several, or all time, for the household or one person at a time: what stands out, where the money went (donut), ranked categories against last month, income-to-left-over waterfall, spending over time, weekday pattern, who spent, and an AI read with concrete suggestions.
 
 ## Hosting (Cloudflare Workers)
 

@@ -2,7 +2,7 @@
 import { store, envVar } from "../storage.mjs";
 export { store };
 
-export const TAGS = ['Groceries','Dining','Coffee','Transport','Fuel','Kids','School','Health','Pharmacy','Home','Utilities','Shopping','Clothes','Beauty','Entertainment','Travel','Gifts','Pets','Fees','Other'];
+export const TAGS = ['Groceries','Dining','Coffee','Transport','Fuel','Kids','School','Health','Pharmacy','Home','Utilities','Shopping','Clothes','Beauty','Entertainment','Travel','Gifts','Pets','Work','Fees','Other'];
 export const CURRENCIES = ['USD','LBP','EUR','AED'];
 export const DEFAULT_SETTINGS = { members:['Rudy','Aya'], people:['Noah'], base:'USD', rates:{USD:1, LBP:89500, EUR:0.92, AED:3.6725}, budget:null, timezone:'Asia/Beirut', goldPrice:null, cashRules:['ATM','Cash Withdrawal','Careem Deliveries'], defaultPaid:{} };
 export const ACCOUNT_TYPES = ['cash','bank','savings','investment','gold','loan','card'];
@@ -18,7 +18,7 @@ const TAG_WORDS = {
   Fuel:['fuel','petrol','gas station','benzine','benzin','diesel','gasoline'],
   Kids:['kids','baby','toys','diapers','nursery','daycare','babysit','toy','stroller'],
   School:['school','tuition','books','stationery','uniform','tutoring','university','course'],
-  Health:['doctor','dentist','clinic','hospital','lab','x-ray','checkup','therapy','optician','glasses'],
+  Health:['doctor','dentist','clinic','hospital','lab','x-ray','checkup','therapy','optician','glasses','gym','workout','fitness','yoga'],
   Pharmacy:['pharmacy','medicine','meds','vitamins','prescription','panadol','advil'],
   Home:['furniture','ikea','repair','plumber','electrician','cleaning','maintenance','decor','garden','paint'],
   Utilities:['electricity','edl','generator','moteur','water','internet','ogero','wifi','alfa','touch','mobile','bill'],
@@ -29,6 +29,7 @@ const TAG_WORDS = {
   Travel:['flight','hotel','airbnb','trip','ticket','visa','train','booking','airport'],
   Gifts:['gift','present','birthday','wedding','flowers','donation','charity','zakat'],
   Pets:['vet','pet','dog','cat'],
+  Work:['work','office','client','invoice','software','subscription for work','coworking','laptop','business','conference','linkedin','domain','hosting','printing','work lunch','work trip'],
   Fees:['fee','bank','transfer','omt','whish','insurance','tax','fine','commission','withdrawal'],
 };
 
@@ -218,7 +219,9 @@ export function monthStats(settings, items, recurring, mk, today){
   return {items,total,byTag,byPerson,byDay,fixed,dim,elapsed,count:items.length};
 }
 export const monthLabel=k=>{ const [y,m]=k.split('-').map(Number); return new Date(Date.UTC(y,m-1,1)).toLocaleString('en-US',{month:'long',year:'numeric',timeZone:'UTC'}); };
-export function analysisPrompt(settings, mk, st, m1, m2, recurring, today, incomeUSD=0, wealth=null){
+/** Prefix for a one-person view, so the coach talks about that person's money and not the household's. */
+function focusLine(settings, by){ return by? `Looking only at ${by}'s spending (the other ${settings.members.length>2? 'members are' : 'member is'} left out), with ${by}'s own fixed costs and income plus an even share of the ones not assigned to anyone. Speak about ${by}'s money, not the household's.\n` : ''; }
+export function analysisPrompt(settings, mk, st, m1, m2, recurring, today, incomeUSD=0, wealth=null, by=null){
   const usd=v=>Math.round(v);
   const tagLine=s=>Object.entries(s.byTag).sort((a,b)=>b[1]-a[1]).map(([t,v])=>`${t} ${usd(v)}`).join(', ')||'none';
   const perLine=s=>Object.entries(s.byPerson).map(([p,v])=>`${p} ${usd(v)}`).join(', ')||'none';
@@ -230,7 +233,7 @@ export function analysisPrompt(settings, mk, st, m1, m2, recurring, today, incom
   const label=monthLabel;
   return {
     system: coachSystem(settings),
-    user: `Month in view: ${label(mk)}, ${st.elapsed} of ${st.dim} days elapsed. Day-to-day total ${usd(st.total)} across ${st.count} items, daily average ${st.elapsed? usd(st.total/st.elapsed):0}, projected month-end day-to-day ${usd(projected)}${st.elapsed<3? ' (too early in the month to project; treat it as the total so far)':''}.
+    user: `${focusLine(settings, by)}Month in view: ${label(mk)}, ${st.elapsed} of ${st.dim} days elapsed. Day-to-day total ${usd(st.total)} across ${st.count} items, daily average ${st.elapsed? usd(st.total/st.elapsed):0}, projected month-end day-to-day ${usd(projected)}${st.elapsed<3? ' (too early in the month to project; treat it as the total so far)':''}.
 By category: ${tagLine(st)}. By person: ${perLine(st)}.
 Largest items: ${big}.
 Previous month (${label(shiftMonth(mk,-1))}, full): total ${usd(m1.total)}; by category: ${tagLine(m1)}; by person: ${perLine(m1)}.
@@ -250,7 +253,7 @@ function coachSystem(settings){
   return `You are a careful, friendly household finance coach for a two-person household (${settings.members.join(' and ')}) living in Lebanon. Reply in plain text only (no markdown symbols such as # or **), at most 230 words, using exactly these short section titles on their own lines: Headline / Watch out / Try this / Fixed costs. In "Watch out" name the categories or items that look high or unusual with their numbers. In "Try this" give 3 concrete, specific changes, each with a rough monthly saving in dollars. In "Fixed costs" say in one or two sentences how large subscriptions and staff salaries are relative to everything and whether anything there deserves a second look. When household income is given, open the Headline with how much of it is left over (the savings rate) and whether that is healthy. Be specific to the numbers; no generic advice; no greetings. Amounts are in USD.`;
 }
 /** Prompt for a range of months (2 or more). perMonth: [{mk, st}] oldest first; prior: stats for the same number of months before the range. */
-export function rangeAnalysisPrompt(settings, perMonth, prior, recurring, incomeUSD=0, wealth=null){
+export function rangeAnalysisPrompt(settings, perMonth, prior, recurring, incomeUSD=0, wealth=null, by=null){
   const usd=v=>Math.round(v);
   const agg={byTag:{},byPerson:{},total:0,count:0,items:[]};
   for(const {st} of perMonth){ agg.total+=st.total; agg.count+=st.count; agg.items.push(...st.items); for(const [t,v] of Object.entries(st.byTag)) agg.byTag[t]=(agg.byTag[t]||0)+v; for(const [p,v] of Object.entries(st.byPerson)) agg.byPerson[p]=(agg.byPerson[p]||0)+v; }
@@ -264,7 +267,7 @@ export function rangeAnalysisPrompt(settings, perMonth, prior, recurring, income
   const priorLine = prior && prior.total ? `The ${n} months before that: day-to-day total ${usd(prior.total)} (${usd(prior.total/n)}/mo); by category: ${Object.entries(prior.byTag).sort((a,b)=>b[1]-a[1]).map(([t,v])=>`${t} ${usd(v)}`).join(', ')||'none'}.` : 'No data for the months before this range.';
   return {
     system: coachSystem(settings).replace('Month in view','Period in view') + ' The data covers several months: talk about monthly averages and the trend from month to month, and name the months where spending jumped.',
-    user: `Period in view: ${monthLabel(perMonth[0].mk)} to ${monthLabel(perMonth[n-1].mk)} (${n} months). Day-to-day per month: ${months}. Total ${usd(agg.total)} across ${agg.count} items, average ${usd(agg.total/n)} per month.
+    user: `${focusLine(settings, by)}Period in view: ${monthLabel(perMonth[0].mk)} to ${monthLabel(perMonth[n-1].mk)} (${n} months). Day-to-day per month: ${months}. Total ${usd(agg.total)} across ${agg.count} items, average ${usd(agg.total/n)} per month.
 By category over the period: ${tagLine(agg)}. By person: ${perLine(agg)}.
 Largest single items: ${big}.
 ${priorLine}

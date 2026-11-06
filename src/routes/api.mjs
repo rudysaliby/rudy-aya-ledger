@@ -161,23 +161,30 @@ export default async (req) => {
     if(route==='analyze' && req.method==='POST'){
       const sel=(Array.isArray(body.months)? body.months : [body.month]).filter(m=>/^\d{4}-\d{2}$/.test(m||'')).sort().slice(-24);
       const months = sel.length? sel : [today.slice(0,7)];
-      const [recurring, income, accounts]=await Promise.all([getRecurring(), getIncome(), getAccounts()]); const incomeUSD=incomeMonthlyUSD(settings, income);
-      const nw=netWorth(settings, accounts); nw.liquid=accounts.filter(a=>a.active!==false && ['cash','bank','savings'].includes(a.type) && bucketOf(a)==='spending').reduce((t,a)=>t+accountUSD(settings,a),0); nw.saved=accounts.filter(a=>a.active!==false && !LIABILITY_TYPES.includes(a.type) && bucketOf(a)==='saved').reduce((t,a)=>t+accountUSD(settings,a),0);
-      try{ const ck=await monthCheck(settings, today.slice(0,7), accounts, [], today); nw.savedThisMonth=ck.savedUSD; }catch(e){}
+      const [recurringAll, incomeAll, accounts]=await Promise.all([getRecurring(), getIncome(), getAccounts()]);
+      // one person's view: their expenses, and their share of fixed costs and income (theirs in full, unassigned ones split evenly)
+      const by = typeof body.by==='string' ? (settings.members||[]).find(m=>m.toLowerCase()===body.by.trim().toLowerCase()) || null : null;
+      const share = r=>{ if(!by) return 1; const b=String(r.by||'').trim(); if(!b) return 1/Math.max(1,(settings.members||[]).length); return b.toLowerCase()===by.toLowerCase()? 1 : 0; };
+      const only = items => by? items.filter(e=>String(e.by||'').trim().toLowerCase()===by.toLowerCase()) : items;
+      const recurring = by? recurringAll.filter(r=>share(r)>0).map(r=>{ const s=share(r); return s===1? r : {...r, amount:Number(r.amount||0)*s, name:r.name+' (shared, split)'}; }) : recurringAll;
+      const incomeUSD=incomeMonthlyUSD(settings, by? incomeAll.filter(i=>share(i)>0).map(i=>({...i, amount:Number(i.amount||0)*share(i)})) : incomeAll);
+      let nw=null;
+      if(!by){ nw=netWorth(settings, accounts); nw.liquid=accounts.filter(a=>a.active!==false && ['cash','bank','savings'].includes(a.type) && bucketOf(a)==='spending').reduce((t,a)=>t+accountUSD(settings,a),0); nw.saved=accounts.filter(a=>a.active!==false && !LIABILITY_TYPES.includes(a.type) && bucketOf(a)==='saved').reduce((t,a)=>t+accountUSD(settings,a),0);
+        try{ const ck=await monthCheck(settings, today.slice(0,7), accounts, [], today); nw.savedThisMonth=ck.savedUSD; }catch(e){} }
       let p;
       if(months.length===1){
         const mk=months[0];
-        const [cur, m1, m2] = await Promise.all([getMonth(mk), getMonth(shiftMonth(mk,-1)), getMonth(shiftMonth(mk,-2))]);
+        const [cur, m1, m2] = (await Promise.all([getMonth(mk), getMonth(shiftMonth(mk,-1)), getMonth(shiftMonth(mk,-2))])).map(only);
         const st=monthStats(settings,cur,recurring,mk,today), s1=monthStats(settings,m1,recurring,shiftMonth(mk,-1),today), s2=monthStats(settings,m2,recurring,shiftMonth(mk,-2),today);
-        if(!st.count && !recurring.length) return text('Nothing to analyze yet. Log a few expenses first.');
-        p=analysisPrompt(settings, mk, st, s1, s2, recurring, today, incomeUSD, nw);
+        if(!st.count && !recurring.length) return text(by? `Nothing of ${by}'s to analyze yet in this month.` : 'Nothing to analyze yet. Log a few expenses first.');
+        p=analysisPrompt(settings, mk, st, s1, s2, recurring, today, incomeUSD, nw, by);
       } else {
         const n=months.length; const priorKeys=[]; for(let i=n;i>=1;i--) priorKeys.push(shiftMonth(months[0],-i));
-        const docs=await Promise.all([...months, ...priorKeys].map(k=>getMonth(k)));
+        const docs=(await Promise.all([...months, ...priorKeys].map(k=>getMonth(k)))).map(only);
         const perMonth=months.map((mk,i)=>({mk, st:monthStats(settings,docs[i],recurring,mk,today)}));
         const prior={total:0,byTag:{}}; priorKeys.forEach((mk,i)=>{ const st=monthStats(settings,docs[n+i],recurring,mk,today); prior.total+=st.total; for(const [t,v] of Object.entries(st.byTag)) prior.byTag[t]=(prior.byTag[t]||0)+v; });
-        if(!perMonth.some(x=>x.st.count) && !recurring.length) return text('Nothing to analyze yet. Log a few expenses first.');
-        p=rangeAnalysisPrompt(settings, perMonth, prior, recurring, incomeUSD, nw);
+        if(!perMonth.some(x=>x.st.count) && !recurring.length) return text(by? `Nothing of ${by}'s to analyze yet in these months.` : 'Nothing to analyze yet. Log a few expenses first.');
+        p=rangeAnalysisPrompt(settings, perMonth, prior, recurring, incomeUSD, nw, by);
       }
       const up = await claudeMessage({ model: analysisModel(), system:p.system, messages:[{role:'user',content:p.user}], max_tokens:700, stream:true });
       const dec=new TextDecoder(), enc=new TextEncoder(); let buf='';

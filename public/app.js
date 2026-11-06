@@ -1,7 +1,7 @@
 // Rudy & Aya Ledger — helpers, state, rendering (sheets.js continues in the same scope)
 'use strict';
-const TAGS = ['Groceries','Dining','Coffee','Transport','Fuel','Kids','School','Health','Pharmacy','Home','Utilities','Shopping','Clothes','Beauty','Entertainment','Travel','Gifts','Pets','Fees','Other'];
-const TAG_ICON = {Groceries:'🛒',Dining:'🍽️',Coffee:'☕',Transport:'🚕',Fuel:'⛽',Kids:'🧸',School:'🎒',Health:'🩺',Pharmacy:'💊',Home:'🏠',Utilities:'💡',Shopping:'🛍️',Clothes:'👕',Beauty:'💅',Entertainment:'🎬',Travel:'✈️',Gifts:'🎁',Pets:'🐾',Fees:'🏦',Other:'•'};
+const TAGS = ['Groceries','Dining','Coffee','Transport','Fuel','Kids','School','Health','Pharmacy','Home','Utilities','Shopping','Clothes','Beauty','Entertainment','Travel','Gifts','Pets','Work','Fees','Other'];
+const TAG_ICON = {Groceries:'🛒',Dining:'🍽️',Coffee:'☕',Transport:'🚕',Fuel:'⛽',Kids:'🧸',School:'🎒',Health:'🩺',Pharmacy:'💊',Home:'🏠',Utilities:'💡',Shopping:'🛍️',Clothes:'👕',Beauty:'💅',Entertainment:'🎬',Travel:'✈️',Gifts:'🎁',Pets:'🐾',Work:'💼',Fees:'🏦',Other:'•'};
 const KINDS = [['subscription','Subscriptions'],['salary','Staff salaries'],['housing','Housing'],['utility','Utilities'],['insurance','Insurance'],['other','Other']];
 const CURRENCIES = ['USD','LBP','EUR','AED'];
 const DEFAULT_SETTINGS = { members:['Rudy','Aya'], people:['Noah'], base:'USD', rates:{USD:1, LBP:89500, EUR:0.92, AED:3.6725}, budget:null, timezone:'Asia/Beirut', goldPrice:null };
@@ -9,12 +9,14 @@ const ACC_TYPES=[['cash','Cash in hand','💵'],['bank','Bank account','🏦'],[
 const LIAB=['loan','card'];
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const PCOL = ['var(--p1)','var(--p2)','var(--p3)','var(--p4)'];
+const CAT_COLORS = ['var(--p1)','var(--p2)','var(--p3)','var(--p4)','var(--p5)','var(--p6)','var(--p7)','var(--p8)'];   // categories, in fixed order of household rank
+const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
 const S = {
   key: ls('key')||'', who: ls('who')||null,
   settings:{...DEFAULT_SETTINGS, rates:{...DEFAULT_SETTINGS.rates}},
   months:{}, moves:{}, monthKeys:[], recurring:[], income:[], accounts:[], networth:[], recon:{}, check:null, loaded:false, loading:false, selectMode:false, selected:new Set(),
-  tab:'add', hMonth: monthKey(new Date()), range:[monthKey(new Date())],
+  tab:'add', hMonth: monthKey(new Date()), range:[monthKey(new Date())], view: ls('insView')||'',
   hFilter:{by:null, tag:null}, monthLoading:{}, toastTimer:null, aiCtl:null, aiDone:false, pollTimer:null,
 };
 
@@ -42,7 +44,11 @@ function memberIdx(name){ return (S.settings.members||[]).findIndex(m=>m.toLower
 function memberColor(name){ const i=memberIdx(name); return i>=0 ? PCOL[i%PCOL.length] : 'var(--faint)'; }
 function initial(name){ return String(name||'?').trim().charAt(0).toUpperCase()||'?'; }
 function recMonthlyUSD(r){ const u=Number(r.amount||0)/rate(r.currency||'USD'); return r.period==='yearly'? u/12 : u; }
-function incomeUSD(){ return S.income.filter(i=>i.active!==false).reduce((a,i)=>a+recMonthlyUSD(i),0); }
+/** How much of a fixed cost or income counts for one person: theirs in full, nobody's split evenly, someone else's not at all. Everyone: all of it. */
+function shareOf(r, who){ if(!who) return 1; const by=String(r.by||'').trim(); if(!by) return 1/Math.max(1,(S.settings.members||[]).length); return by.toLowerCase()===who.toLowerCase()? 1 : 0; }
+function isBy(e, who){ return String(e.by||'').trim().toLowerCase()===String(who).toLowerCase(); }
+function incomeUSD(who){ return S.income.filter(i=>i.active!==false).reduce((a,i)=>a+recMonthlyUSD(i)*shareOf(i,who),0); }
+function fixedUSD(who){ return S.recurring.filter(r=>r.active!==false).reduce((a,r)=>a+recMonthlyUSD(r)*shareOf(r,who),0); }
 function accountUSD(a){ if(a.type==='gold'){ const g=Number(a.grams)||0, pr=Number(S.settings.goldPrice)||0; if(g>0&&pr>0) return g*pr; } return Number(a.amount||0)/rate(a.currency||'USD'); }
 function owners(){ return [...(S.settings.members||[]), ...(S.settings.people||[]), 'Joint']; }
 function ownerColor(o){ const i=owners().indexOf(o); return i>=0? PCOL[i%PCOL.length] : 'var(--faint)'; }
@@ -111,12 +117,13 @@ function render(){ renderHeader(); if(S.tab==='add') renderAdd(); if(S.tab==='hi
 function renderHeader(){ const b=$('whoBtn'); b.textContent=initial(S.who||'?'); b.style.background=S.who? memberColor(S.who):'var(--faint)'; const ms=S.settings.members||[]; $('brandName').textContent = ms.length? ms.join(' & ') : 'Ledger'; }
 /** Month-end projection of day-to-day spending; before day 3 there is too little to go on, so the total so far is used. */
 function projectedTotal(st){ return st.elapsed>=3 ? st.total/st.elapsed*st.dim : st.total; }
-function monthStats(mk){
-  const ex=monthItems(mk); const byTag={}, byPerson={}, byDay={}; let total=0;
-  for(const e of ex){ total+=e.usd; byTag[e.tag]=(byTag[e.tag]||0)+e.usd; const p=e.by||'Unknown'; byPerson[p]=(byPerson[p]||0)+e.usd; const d=Number(e.date.slice(8,10)); byDay[d]=(byDay[d]||0)+e.usd; }
-  const fixed=S.recurring.filter(r=>r.active!==false).reduce((a,r)=>a+recMonthlyUSD(r),0);
+/** Totals for one month; with `who`, only that person's expenses and their share of fixed costs. */
+function monthStats(mk, who){
+  const ex = who? monthItems(mk).filter(e=>isBy(e,who)) : monthItems(mk); const byTag={}, byPerson={}, byDay={}, byTagBy={}; let total=0;
+  for(const e of ex){ total+=e.usd; byTag[e.tag]=(byTag[e.tag]||0)+e.usd; const p=e.by||'Unknown'; byPerson[p]=(byPerson[p]||0)+e.usd; const tb=byTagBy[e.tag]||(byTagBy[e.tag]={}); tb[p]=(tb[p]||0)+e.usd; const d=Number(e.date.slice(8,10)); byDay[d]=(byDay[d]||0)+e.usd; }
+  const fixed=fixedUSD(who);
   const dim=daysInMonth(mk); const t=todayKey(); const elapsed = mk===t.slice(0,7)? Number(t.slice(8,10)) : (mk<t.slice(0,7)? dim : 0);
-  return {ex,total,byTag,byPerson,byDay,fixed,dim,elapsed,count:ex.length};
+  return {ex,total,byTag,byPerson,byTagBy,byDay,fixed,dim,elapsed,count:ex.length};
 }
 function renderAdd(){
   const mk=monthKey(new Date()); const st=monthStats(mk); const prev=monthStats(shiftMonth(mk,-1));
@@ -230,75 +237,124 @@ function shiftMonthDate(days){ const d=new Date(); d.setDate(d.getDate()-days); 
 /** One sentence on a reconciliation gap, in the account's own terms (a card owes; a bank or pocket holds). */
 function gapText(a, r){ const amt=fmtAmt(Math.abs(r.gap),a.currency); if(a.type==='card') return r.gap>0? 'about '+amt+' charged to it that is not logged' : amt+' less owed than expected (a payment or refund not logged?)'; return r.gap<0? 'about '+amt+' left it that is not logged' : amt+' more than expected (money in that is not logged?)'; }
 
-// ---------- insights: range ----------
+// ---------- insights: range & view ----------
 function dataMonths(){ const cm=monthKey(new Date()); const set=new Set(S.monthKeys.filter(m=>m<=cm)); set.add(cm); return [...set].sort(); }
 function availableMonths(){ const cm=monthKey(new Date()); const set=new Set(dataMonths()); for(let i=0;i<6;i++) set.add(shiftMonth(cm,-i)); return [...set].sort(); }
 function rangeLabel(r){ if(r.length===1) return monthLabel(r[0]); const a=r[0], b=r[r.length-1]; const [ya]=a.split('-'), [yb]=b.split('-'); return (ya===yb? monthShort(a).replace(/ \d+$/,'') : monthShort(a))+' – '+monthLabel(b); }
-function setRange(r){ S.range=[...new Set(r)].sort(); if(!S.range.length) S.range=[monthKey(new Date())]; S.aiDone=false; $('aiOut').textContent=''; $('aiStatus').textContent=''; renderInsights(); }
+function resetAI(){ S.aiDone=false; $('aiOut').textContent=''; $('aiStatus').textContent=''; }
+function setRange(r){ S.range=[...new Set(r)].sort(); if(!S.range.length) S.range=[monthKey(new Date())]; resetAI(); renderInsights(); }
 function isAll(){ const d=dataMonths(); return d.length>1 && d.every(m=>S.range.includes(m)) && S.range.every(m=>d.includes(m)); }
+/** The person the Insights screen is filtered to (a member's canonical name), or null for the whole household. */
+function viewName(){ const i=memberIdx(S.view); return i>=0? (S.settings.members||[])[i] : null; }
+function setView(v){ S.view=v||''; lsSet('insView', S.view||null); resetAI(); renderInsights(); }
 function renderRange(){
   const months=availableMonths(); const cm=monthKey(new Date()); const sel=new Set(S.range); const all=isAll();
   let html=''; months.forEach(m=>{ html+=`<button class="chip ${sel.has(m)&&!all?'on':''}" data-range="${m}">${esc(monthShort(m))}</button>`; });
   const strip=$('rangeStrip'); strip.innerHTML=html; $('rangeAll').classList.toggle('on',all);
   $('rangeLabel').innerHTML = esc(all? 'All time' : rangeLabel(S.range)) + (S.range.length>1? `<small>${S.range.length} months</small>` : '');
   $('rangeReset').classList.toggle('hide', S.range.length===1 && S.range[0]===cm);
+  const ms=S.settings.members||[]; const who=viewName();
+  $('viewSeg').innerHTML = `<button type="button" class="${!who?'on':''}" data-view="">${ms.length===2?'Both':'Everyone'}</button>`+ms.map(m=>`<button type="button" class="${who===m?'on':''}" data-view="${esc(m)}"><i class="dot" style="background:${memberColor(m)}"></i>${esc(m)}</button>`).join('');
   requestAnimationFrame(()=>{ const on=strip.querySelector('.chip.on:last-of-type'); if(on) strip.scrollLeft = Math.max(0, on.offsetLeft - strip.clientWidth + on.offsetWidth + 12); else strip.scrollLeft=strip.scrollWidth; });
 }
 $('rangeAll').onclick=()=>setRange(dataMonths());
 $('rangeStrip').addEventListener('click',e=>{ const b=e.target.closest('[data-range]'); if(!b) return; const v=b.dataset.range; const cur=new Set(S.range); if(isAll()){ setRange([v]); return; } if(cur.has(v)){ cur.delete(v); } else cur.add(v); setRange([...cur]); });
 $('rangeReset').onclick=()=>setRange([monthKey(new Date())]);
+$('viewSeg').addEventListener('click',e=>{ const b=e.target.closest('[data-view]'); if(b) setView(b.dataset.view); });
 
-function rangeStats(){
-  const per=S.range.map(mk=>({mk, st:monthStats(mk)}));
-  const agg={total:0,count:0,byTag:{},byPerson:{},items:[],fixed:0,months:per.length,loading:per.some(p=>S.monthLoading[p.mk]||!S.months[p.mk])};
-  for(const {st} of per){ agg.total+=st.total; agg.count+=st.count; agg.items.push(...st.ex); for(const [t,v] of Object.entries(st.byTag)) agg.byTag[t]=(agg.byTag[t]||0)+v; for(const [p,v] of Object.entries(st.byPerson)) agg.byPerson[p]=(agg.byPerson[p]||0)+v; }
+/** Stats for the selected months (optionally one person's), plus the same number of months before them for comparison. */
+function rangeStats(who){
+  const per=S.range.map(mk=>({mk, st:monthStats(mk, who)}));
+  const agg={total:0,count:0,byTag:{},byPerson:{},byTagBy:{},items:[],fixed:0,months:per.length,loading:per.some(p=>S.monthLoading[p.mk]||!S.months[p.mk])};
+  for(const {st} of per){ agg.total+=st.total; agg.count+=st.count; agg.items.push(...st.ex); for(const [t,v] of Object.entries(st.byTag)) agg.byTag[t]=(agg.byTag[t]||0)+v; for(const [p,v] of Object.entries(st.byPerson)) agg.byPerson[p]=(agg.byPerson[p]||0)+v; for(const [t,o] of Object.entries(st.byTagBy)){ const d=agg.byTagBy[t]||(agg.byTagBy[t]={}); for(const [p,v] of Object.entries(o)) d[p]=(d[p]||0)+v; } }
   agg.fixed = per.length? per[0].st.fixed : 0;
-  return {per, agg};
+  const n=per.length; const prior={total:0,count:0,byTag:{},months:n,dim:0};
+  for(let i=1;i<=n;i++){ const mk=shiftMonth(S.range[0],-i); const st=monthStats(mk, who); prior.total+=st.total; prior.count+=st.count; prior.dim+=st.dim; for(const [t,v] of Object.entries(st.byTag)) prior.byTag[t]=(prior.byTag[t]||0)+v; }
+  return {per, agg, prior};
 }
+/** Average spend per weekday over the elapsed days of the months in view (index 0 = Sunday). */
+function weekdayProfile(per){
+  const tot=[0,0,0,0,0,0,0], occ=[0,0,0,0,0,0,0]; let days=0;
+  for(const {mk, st} of per){ const [y,m]=mk.split('-').map(Number); for(let d=1; d<=st.elapsed; d++){ const w=new Date(y,m-1,d).getDay(); occ[w]++; days++; tot[w]+=st.byDay[d]||0; } }
+  if(!days) return null; return {tot, occ, days, avg:tot.map((v,i)=>occ[i]? v/occ[i] : 0)};
+}
+/** Colours follow the category: the household's biggest categories in this period take the palette in order, so switching person never repaints a slice. */
+function catColors(agg, all){
+  const map={}; let i=0; const rank=o=>Object.entries(o.byTag).sort((a,b)=>b[1]-a[1]).map(x=>x[0]);
+  rank(all).slice(0,CAT_COLORS.length).forEach(t=>{ map[t]=CAT_COLORS[i++]; });
+  rank(agg).slice(0,5).forEach(t=>{ if(!map[t]) map[t]= i<CAT_COLORS.length? CAT_COLORS[i++] : 'var(--faint)'; });
+  return map;
+}
+/** Short computed observations about the period, most useful first. */
+function highlightLines({per, agg, prior, who, isCur, st, all, members}){
+  const out=[]; const tot=agg.total; if(!tot) return out;
+  const n=per.length; const b=s=>`<b>${esc(s)}</b>`; const pct=v=>Math.round(v/tot*100);
+  const cats=Object.entries(agg.byTag).sort((a,b)=>b[1]-a[1]);
+  const [t0,v0]=cats[0];
+  out.push({icon:TAG_ICON[t0]||'•', html:`${esc(t0)} is the biggest: ${b(fmtBase(Math.round(v0)))}, ${b(pct(v0)+'%')} of day-to-day${cats[1]? `, then ${esc(cats[1][0])} at ${pct(cats[1][1])}%` : ''}.`});
+  // biggest mover against the period before; a month in progress is compared with the same share of last month
+  const scale = isCur&&st ? st.elapsed/st.dim : 1; const vs = n===1? (isCur? "last month's pace" : 'last month') : `the ${n} months before`;
+  if(prior.total>0){ let best=null;
+    for(const t of new Set([...Object.keys(agg.byTag), ...Object.keys(prior.byTag)])){ const cur=agg.byTag[t]||0, pv=(prior.byTag[t]||0)*scale; if(Math.max(cur,pv)<Math.max(25, tot*0.04)) continue; const d=cur-pv; if(!best || Math.abs(d)>Math.abs(best.d)) best={t,cur,pv,d}; }
+    if(best && Math.abs(best.d)>=Math.max(20, tot*0.03)){ const up=best.d>0; const p=best.pv>0? Math.round(Math.abs(best.d)/best.pv*100) : null;
+      out.push({icon:up?'📈':'📉', html:`${esc(best.t)} is ${up?'up':'down'} ${p!=null&&p<400? b(p+'%') : b(fmtBase(Math.round(Math.abs(best.d))))} on ${vs} (${esc(fmtShort(best.cur))} vs ${esc(fmtShort(best.pv))}).`}); } }
+  if(!who && members.length>1){ const parts=members.map(m=>({m, v:agg.byPerson[m]||0})).sort((a,b)=>b.v-a.v); if(parts[0].v>0){ const lead=parts[0]; const share=pct(lead.v);
+    out.push({icon:'👥', html: share>=65? `${esc(lead.m)} paid for most of it: ${b(share+'%')} (${esc(fmtShort(lead.v))}).` : `Split ${parts.map(p=>esc(p.m)+' '+b(pct(p.v)+'%')).join(' · ')}.`}); } }
+  else if(who && all.total>0){ out.push({icon:'👥', html:`${esc(who)} accounts for ${b(Math.round(tot/all.total*100)+'%')} of the household's day-to-day spending.`}); }
+  const big=[...agg.items].sort((a,b)=>b.usd-a.usd)[0];
+  if(big && big.usd>=tot*0.08) out.push({icon:'🧾', html:`Biggest single expense: ${esc(big.desc)} ${b(fmtBase(big.usd))}${!who&&big.by? ', '+esc(big.by) : ''} (${esc(dayLabel(big.date))}), ${pct(big.usd)}% of the total.`});
+  const wd=weekdayProfile(per);
+  if(wd && wd.days>=14){ const i=wd.avg.indexOf(Math.max(...wd.avg)); const week=(wd.avg[1]+wd.avg[2]+wd.avg[3]+wd.avg[4]+wd.avg[5])/5; const weekend=(i===0||i===6) && week>0;
+    if(wd.avg[i]>0) out.push({icon:'📅', html:`${DAY_NAMES[i]}s cost the most: ${b(fmtBase(Math.round(wd.avg[i])))} on average${weekend? `, ${(wd.avg[i]/week).toFixed(1)}× a weekday` : ''}.`}); }
+  if(isCur && st && st.elapsed>=3 && prior.total>0){ const proj=projectedTotal(st); const d=Math.round((proj-prior.total)/prior.total*100);
+    out.push({icon:'⏱️', html:`At this pace the month ends near ${b(fmtBase(Math.round(proj)))}, ${d===0?'level with':(d>0? b('+'+d+'%')+' above' : b(Math.abs(d)+'%')+' below')} last month.`}); }
+  const small=agg.items.filter(e=>e.usd<10); const sv=small.reduce((a,e)=>a+e.usd,0);
+  if(small.length>=8 && sv>=tot*0.03) out.push({icon:'🪙', html:`${b(small.length)} small items under ${esc(fmtShort(10))} add up to ${b(fmtBase(Math.round(sv)))}.`});
+  return out.slice(0,5);
+}
+
 function renderInsights(){
   renderRange();
   S.range.forEach(ensureMonth);
-  const single=S.range.length===1; const mk=S.range[S.range.length-1]; const cm=monthKey(new Date()); const isCur = single && mk===cm;
-  if(single){ ensureMonth(shiftMonth(mk,-1)); } else { const n=S.range.length; for(let i=1;i<=n;i++) ensureMonth(shiftMonth(S.range[0],-i)); }
-  const {per, agg}=rangeStats();
-  const st = single? per[0].st : null;
-  const members=S.settings.members||[];
+  const single=S.range.length===1; const mk=S.range[S.range.length-1]; const cm=monthKey(new Date()); const isCur = single && mk===cm; const n=S.range.length;
+  for(let i=1;i<=n;i++) ensureMonth(shiftMonth(S.range[0],-i));
+  const who=viewName(); const members=S.settings.members||[];
+  const {per, agg, prior}=rangeStats(who); const all = who? rangeStats(null).agg : agg;   // household totals: shares, and stable category colours
+  const st = single? per[0].st : null; const inc=incomeUSD(who);
+  const recs=S.recurring.filter(r=>r.active!==false && shareOf(r,who)>0); const sharedRecs = who? recs.filter(r=>!String(r.by||'').trim()).length : 0;
+  const fixedNote = recs.length+' recurring'+(sharedRecs? ' · shared ones split' : '');
   // tiles
   if(single){
-    const pv=monthStats(shiftMonth(mk,-1)); const dailyAvg = st.elapsed? st.total/st.elapsed : 0; const projected = isCur ? projectedTotal(st) : st.total; const canProject = !isCur || st.elapsed>=3; const all = st.total+st.fixed;
+    const pvTotal=prior.total, pvDim=prior.dim||st.dim; const dailyAvg = st.elapsed? st.total/st.elapsed : 0; const projected = isCur ? projectedTotal(st) : st.total; const canProject = !isCur || st.elapsed>=3; const allIn = st.total+st.fixed;
     const delta=(a,b)=>{ if(!b) return ''; const p=Math.round((a-b)/b*100); if(Math.abs(p)<1) return '<span class="d">same as last month</span>'; return `<span class="d ${p>0?'up':'down'}">${p>0?'▲':'▼'} ${Math.abs(p)}% vs last month</span>`; };
-    const inc=incomeUSD(); const left = inc - (isCur? projected : st.total) - st.fixed;
+    const left = inc - (isCur? projected : st.total) - st.fixed;
     $('tiles').innerHTML = `
-      <div class="tile"><span class="k">All in</span><span class="v">${esc(fmtBase(all))}</span><span class="d">day-to-day + fixed</span></div>
+      <div class="tile"><span class="k">All in</span><span class="v">${esc(fmtBase(allIn))}</span><span class="d">day-to-day + fixed${who? ' · '+esc(who) : ''}</span></div>
       ${inc>0? `<div class="tile"><span class="k">${isCur? (canProject?'Left at month end':'Left so far') :'Left over'}</span><span class="v" style="color:${left>=0?'var(--good)':'var(--bad)'}">${esc(fmtBase(Math.round(left)))}</span><span class="d">${Math.round(left/inc*100)}% of ${esc(fmtShort(inc))} income</span></div>` : `<div class="tile"><span class="k">${isCur?'Projected':'Daily average'}</span><span class="v">${esc(fmtBase(Math.round(isCur? projected+st.fixed : (st.total/st.dim))))}</span><span class="d">${isCur? (canProject? fmtBase(Math.round(dailyAvg))+' a day' : 'so far · too early to project') : 'per day'}</span></div>`}
-      <div class="tile"><span class="k">Day-to-day</span><span class="v">${esc(fmtBase(st.total))}</span>${(isCur && st.elapsed<3 ? '' : delta(st.total, isCur? pv.total*(st.elapsed/pv.dim) : pv.total))||'<span class="d">'+st.count+' items</span>'}</div>
-      <div class="tile"><span class="k">Fixed costs</span><span class="v">${esc(fmtBase(st.fixed))}</span><span class="d">${S.recurring.filter(r=>r.active!==false).length} recurring</span></div>
+      <div class="tile"><span class="k">Day-to-day</span><span class="v">${esc(fmtBase(st.total))}</span>${(isCur && st.elapsed<3 ? '' : delta(st.total, isCur? pvTotal*(st.elapsed/pvDim) : pvTotal))||'<span class="d">'+st.count+' items</span>'}</div>
+      <div class="tile"><span class="k">Fixed costs</span><span class="v">${esc(fmtBase(st.fixed))}</span><span class="d">${esc(fixedNote)}</span></div>
       ${inc>0? `<div class="tile"><span class="k">${isCur?'Projected':'Daily average'}</span><span class="v">${esc(fmtBase(Math.round(isCur? projected+st.fixed : (st.total/st.dim))))}</span><span class="d">${isCur? (canProject? fmtBase(Math.round(dailyAvg))+' a day · '+st.elapsed+' of '+st.dim+' days' : 'so far · too early to project') : 'per day'}</span></div>
-      <div class="tile"><span class="k">Income</span><span class="v" style="color:var(--good)">${esc(fmtBase(Math.round(inc)))}</span><span class="d">per month</span></div>` : ''}`;
+      <div class="tile"><span class="k">Income</span><span class="v" style="color:var(--good)">${esc(fmtBase(Math.round(inc)))}</span><span class="d">per month${who? ' · '+esc(who)+"'s" : ''}</span></div>` : ''}`;
   } else {
-    const n=agg.months; const prior=[]; for(let i=1;i<=n;i++) prior.push(monthStats(shiftMonth(S.range[0],-i)).total); const priorTotal=prior.reduce((a,b)=>a+b,0);
     const totals=per.map(p=>p.st.total); const hi=per[totals.indexOf(Math.max(...totals))], lo=per[totals.indexOf(Math.min(...totals))];
-    const d = priorTotal? Math.round((agg.total-priorTotal)/priorTotal*100) : null;
-    const inc=incomeUSD(); const left=inc*n-agg.total-agg.fixed*n;
+    const d = prior.total? Math.round((agg.total-prior.total)/prior.total*100) : null;
+    const left=inc*n-agg.total-agg.fixed*n;
     $('tiles').innerHTML = `
-      <div class="tile"><span class="k">All in</span><span class="v">${esc(fmtBase(agg.total+agg.fixed*n))}</span><span class="d">${n} months, incl. fixed</span></div>
+      <div class="tile"><span class="k">All in</span><span class="v">${esc(fmtBase(agg.total+agg.fixed*n))}</span><span class="d">${n} months, incl. fixed${who? ' · '+esc(who) : ''}</span></div>
       ${inc>0? `<div class="tile"><span class="k">Left over</span><span class="v" style="color:${left>=0?'var(--good)':'var(--bad)'}">${esc(fmtBase(Math.round(left)))}</span><span class="d">${Math.round(left/(inc*n)*100)}% of ${esc(fmtShort(inc*n))} income</span></div>` : `<div class="tile"><span class="k">Per month</span><span class="v">${esc(fmtBase(Math.round(agg.total/n)))}</span><span class="d">average day-to-day</span></div>`}
       <div class="tile"><span class="k">Day-to-day</span><span class="v">${esc(fmtBase(agg.total))}</span>${d==null?'<span class="d">'+agg.count+' items</span>':`<span class="d ${d>0?'up':'down'}">${d>0?'▲':'▼'} ${Math.abs(d)}% vs the ${n} months before</span>`}</div>
       <div class="tile"><span class="k">High / low</span><span class="v">${esc(fmtShort(hi.st.total))}<span class="muted" style="font-size:14px;font-weight:600"> / ${esc(fmtShort(lo.st.total))}</span></span><span class="d">${esc(monthShort(hi.mk))} / ${esc(monthShort(lo.mk))}</span></div>
       ${inc>0? `<div class="tile"><span class="k">Per month</span><span class="v">${esc(fmtBase(Math.round(agg.total/n)))}</span><span class="d">average day-to-day</span></div>
-      <div class="tile"><span class="k">Income</span><span class="v" style="color:var(--good)">${esc(fmtBase(Math.round(inc*n)))}</span><span class="d">${esc(fmtShort(inc))} a month</span></div>` : ''}`;
+      <div class="tile"><span class="k">Income</span><span class="v" style="color:var(--good)">${esc(fmtBase(Math.round(inc*n)))}</span><span class="d">${esc(fmtShort(inc))} a month${who? ' · '+esc(who)+"'s" : ''}</span></div>` : ''}`;
   }
-  // budget
-  // the budget is typed in the base currency; everything else here is in USD
+  // budget (household-wide; typed in the base currency, everything else here is in USD)
   const bc=$('budgetCard'); const budget=(Number(S.settings.budget)||0)/rate(S.settings.base);
-  if(budget>0 && single){ bc.classList.remove('hide'); const used=st.total+st.fixed; const pct=Math.min(100,used/budget*100); const left=budget-used; bc.innerHTML=`<div class="row-between"><h2>Monthly budget</h2><span class="num" style="font-weight:700">${esc(fmtBase(used))} <span class="muted">/ ${esc(fmtBase(budget))}</span></span></div><div class="track"><i class="${used>budget?'over':''}" style="width:${pct}%"></i></div><div class="muted" style="font-size:13px">${used>budget? '<span style="color:var(--bad);font-weight:700">Over by '+esc(fmtBase(used-budget))+'</span>' : esc(fmtBase(left))+' left'+(isCur&&st.dim>st.elapsed? ' · '+esc(fmtBase(Math.round(Math.max(0,left)/(st.dim-st.elapsed))))+' a day for the rest of the month':'')}</div>`; }
-  else if(budget>0){ bc.classList.remove('hide'); const used=agg.total+agg.fixed*agg.months; const cap=budget*agg.months; const pct=Math.min(100,used/cap*100); bc.innerHTML=`<div class="row-between"><h2>Budget over ${agg.months} months</h2><span class="num" style="font-weight:700">${esc(fmtBase(used))} <span class="muted">/ ${esc(fmtBase(cap))}</span></span></div><div class="track"><i class="${used>cap?'over':''}" style="width:${pct}%"></i></div><div class="muted" style="font-size:13px">${used>cap? '<span style="color:var(--bad);font-weight:700">Over by '+esc(fmtBase(used-cap))+'</span>' : esc(fmtBase(cap-used))+' under budget'}</div>`; }
+  if(budget>0 && !who && single){ bc.classList.remove('hide'); const used=st.total+st.fixed; const pct=Math.min(100,used/budget*100); const left=budget-used; bc.innerHTML=`<div class="row-between"><h2>Monthly budget</h2><span class="num" style="font-weight:700">${esc(fmtBase(used))} <span class="muted">/ ${esc(fmtBase(budget))}</span></span></div><div class="track"><i class="${used>budget?'over':''}" style="width:${pct}%"></i></div><div class="muted" style="font-size:13px">${used>budget? '<span style="color:var(--bad);font-weight:700">Over by '+esc(fmtBase(used-budget))+'</span>' : esc(fmtBase(left))+' left'+(isCur&&st.dim>st.elapsed? ' · '+esc(fmtBase(Math.round(Math.max(0,left)/(st.dim-st.elapsed))))+' a day for the rest of the month':'')}</div>`; }
+  else if(budget>0 && !who){ bc.classList.remove('hide'); const used=agg.total+agg.fixed*agg.months; const cap=budget*agg.months; const pct=Math.min(100,used/cap*100); bc.innerHTML=`<div class="row-between"><h2>Budget over ${agg.months} months</h2><span class="num" style="font-weight:700">${esc(fmtBase(used))} <span class="muted">/ ${esc(fmtBase(cap))}</span></span></div><div class="track"><i class="${used>cap?'over':''}" style="width:${pct}%"></i></div><div class="muted" style="font-size:13px">${used>cap? '<span style="color:var(--bad);font-weight:700">Over by '+esc(fmtBase(used-cap))+'</span>' : esc(fmtBase(cap-used))+' under budget'}</div>`; }
   else bc.classList.add('hide');
-  // month check (current month only)
+  // month check (current month, whole household): compares what was logged with how the balances actually moved
   const ck=$('checkCard'); const c=S.check;
-  // compares what was logged (income, spending, refunds) with how the balances actually moved; planned fixed costs are
-  // not bookings, so they only enter once they are logged as expenses or show up as a gap on an account
-  if(single && isCur && c && c.month===mk){ ck.classList.remove('hide'); const allIn=c.spentUSD; const expected=c.incomeUSD+c.refundsUSD-allIn; const unexp = c.actualDelta==null? null : Math.round(c.actualDelta-expected-c.adjustUSD);
+  if(single && isCur && !who && c && c.month===mk){ ck.classList.remove('hide'); const allIn=c.spentUSD; const expected=c.incomeUSD+c.refundsUSD-allIn; const unexp = c.actualDelta==null? null : Math.round(c.actualDelta-expected-c.adjustUSD);
     const gapsN=Object.values(S.recon).filter(r=>r.gap).length;
     ck.innerHTML=`<div class="row-between"><h2>Month check</h2><span class="muted" style="font-size:12px">${esc(monthShort(mk))}</span></div>
       <div class="line"><span>Income received</span><b>${esc(fmtBase(Math.round(c.incomeUSD)))}</b></div>
@@ -310,13 +366,25 @@ function renderInsights(){
       ${c.actualDelta==null? `<div class="unexp">Balances have ${esc(c.startDate? 'no reading before '+monthShort(mk) : 'no history yet')}; the check compares from next month.</div>` : `<div class="line"><span>Balances actually moved</span><b>${c.actualDelta>=0?'+':'−'}${esc(fmtBase(Math.round(Math.abs(c.actualDelta))))}</b></div>
       <div class="unexp ${Math.abs(unexp)<Math.max(20,0.02*allIn)?'ok':''}">${Math.abs(unexp)<Math.max(20,0.02*allIn)? 'Everything lines up.' : (unexp<0? esc(fmtBase(Math.abs(unexp)))+' left your accounts without being logged.' : esc(fmtBase(unexp))+' arrived that is not logged as income.')}${gapsN? ' '+gapsN+' account'+(gapsN>1?'s':'')+' need a look in Wealth.' : ''}</div>`}`; }
   else ck.classList.add('hide');
+  // what stands out
+  const lines=highlightLines({per, agg, prior, who, isCur, st, all, members});
+  $('hlList').innerHTML = lines.length? lines.map(h=>`<li><span class="ic" aria-hidden="true">${h.icon}</span><span>${h.html}</span></li>`).join('') : `<li><span class="ic" aria-hidden="true">✨</span><span class="muted">${agg.loading? 'Loading…' : 'Log a few expenses and the patterns show up here.'}</span></li>`;
   // charts
-  if(single) drawDailyLines(mk, st); else drawMonthlyLines(per, agg.fixed);
-  drawCategoryBars(per, agg);
-  // who
-  const names=[...new Set([...members,...Object.keys(agg.byPerson)])].filter(n=>members.includes(n)||agg.byPerson[n]); const tot=agg.total||1;
-  $('splitBar').innerHTML = names.map(n=>`<i style="width:${(agg.byPerson[n]||0)/tot*100}%;background:${memberColor(n)}"></i>`).join('');
-  $('splitLegend').innerHTML = names.map(n=>`<span><i class="dot" style="background:${memberColor(n)};margin-right:5px"></i>${esc(n)} <b class="num">${esc(fmtBase(agg.byPerson[n]||0))}</b> ${agg.total?Math.round((agg.byPerson[n]||0)/agg.total*100)+'%':''}</span>`).join('') || '<span class="faint">No spending in this period.</span>';
+  const colors=catColors(agg, all);
+  drawDonut(agg, colors, who);
+  drawCategoryBars(agg, prior, who, isCur, st, colors);
+  drawWaterfall(agg, n, who, isCur, inc);
+  if(single) drawDailyLines(mk, st, who); else drawMonthlyBars(per, who);
+  drawWeekday(per, who);
+  // who spent (household view only)
+  $('whoCard').classList.toggle('hide', !!who);
+  if(!who){
+    const names=[...new Set([...members,...Object.keys(agg.byPerson)])].filter(nm=>members.includes(nm)||agg.byPerson[nm]); const tot=agg.total||1;
+    $('splitBar').innerHTML = names.map(nm=>`<i style="width:${(agg.byPerson[nm]||0)/tot*100}%;background:${memberColor(nm)}"></i>`).join('');
+    $('splitLegend').innerHTML = names.map(nm=>`<span><i class="dot" style="background:${memberColor(nm)};margin-right:5px"></i>${esc(nm)} <b class="num">${esc(fmtBase(agg.byPerson[nm]||0))}</b> ${agg.total?Math.round((agg.byPerson[nm]||0)/agg.total*100)+'%':''}</span>`).join('') || '<span class="faint">No spending in this period.</span>';
+    $('whoGrid').innerHTML = agg.total? names.map(nm=>{ const v=agg.byPerson[nm]||0; const items=agg.items.filter(e=>(e.by||'Unknown')===nm); const top=Object.entries(agg.byTagBy).map(([t,o])=>[t,o[nm]||0]).sort((a,b)=>b[1]-a[1])[0];
+      return `<div class="p"><div class="nm"><i class="dot" style="background:${memberColor(nm)}"></i>${esc(nm)}</div><div class="v">${esc(fmtBase(Math.round(v)))}</div><div class="d">${items.length} item${items.length===1?'':'s'}${items.length? ' · avg '+esc(fmtShort(v/items.length)) : ''}</div><div class="d">${top&&top[1]>0? 'mostly '+esc((TAG_ICON[top[0]]||'')+' '+top[0]) : '&nbsp;'}</div></div>`; }).join('') : '';
+  }
   // biggest
   const big=[...agg.items].sort((a,b)=>b.usd-a.usd).slice(0,5);
   $('bigList').innerHTML = big.length? big.map(e=>rowHTML(e)).join('') : '<li class="empty" style="padding:12px">Nothing yet.</li>';

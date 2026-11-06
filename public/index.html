@@ -95,19 +95,24 @@
     <div class="range">
       <div class="title"><div class="label" id="rangeLabel">October 2026</div><button class="link" id="rangeReset">This month</button></div>
       <div style="display:flex;gap:8px;align-items:flex-start"><button class="chip" id="rangeAll" style="flex:none">All</button><div class="strip" id="rangeStrip" style="flex:1;min-width:0;margin:0"></div></div>
-      <div class="help">Tap one month, or several to compare. "All" covers everything logged.</div>
+      <div class="seg view" id="viewSeg" role="group" aria-label="Whose spending"></div>
+      <div class="help">Tap one month, or several to compare. "All" covers everything logged. Pick a name to see one person's spending on its own.</div>
     </div>
     <div class="tiles" id="tiles"></div>
     <div class="card budget hide" id="budgetCard"></div>
     <div class="card check hide" id="checkCard"></div>
+    <div class="card"><h2 style="margin-bottom:10px">What stands out</h2><ul class="standout" id="hlList"></ul></div>
+    <div class="card"><div class="row-between" style="margin-bottom:10px"><h2>Where it went</h2><span class="muted" style="font-size:12px" id="donutSub"></span></div><div class="donut-wrap"><div class="chart donut" id="donutChart"></div><div class="dlegend" id="donutLegend"></div></div></div>
+    <div class="card"><div class="row-between" style="margin-bottom:10px"><h2>By category</h2><span class="muted" style="font-size:12px" id="barSub"></span></div><div class="chart hbars" id="barChart"></div><div class="legend" id="barLegend" style="margin-top:10px"></div></div>
+    <div class="card"><div class="row-between" style="margin-bottom:6px"><h2>Money flow</h2><span class="muted" style="font-size:12px" id="flowSub"></span></div><div class="chart" id="flowChart"></div><div class="legend" id="flowLegend" style="margin-top:8px"></div></div>
     <div class="card"><div class="row-between" style="margin-bottom:6px"><h2 id="lineTitle">Spending over time</h2><span class="muted" style="font-size:12px" id="lineSub"></span></div><div class="chart" id="lineChart"></div><div class="legend" id="lineLegend" style="margin-top:8px"></div></div>
-    <div class="card"><div class="row-between" style="margin-bottom:6px"><h2>By category</h2><span class="muted" style="font-size:12px" id="barSub"></span></div><div class="chart" id="barChart"></div><div class="legend" id="barLegend" style="margin-top:8px"></div></div>
+    <div class="card hide" id="wdCard"><div class="row-between" style="margin-bottom:6px"><h2>By weekday</h2><span class="muted" style="font-size:12px" id="wdSub"></span></div><div class="chart" id="wdChart"></div></div>
+    <div class="card" id="whoCard"><h2 style="margin-bottom:10px">Who spent</h2><div class="split" id="splitBar"></div><div class="legend" id="splitLegend" style="margin-top:8px"></div><div class="who2" id="whoGrid"></div></div>
     <div class="card ai">
       <div class="row-between"><h2>AI read</h2><span class="status" id="aiStatus"></span></div>
       <div class="out" id="aiOut"></div>
       <div class="bar"><button class="primary" id="aiBtn">Analyze</button><button class="secondary hide" id="aiStop">Stop</button></div>
     </div>
-    <div class="card"><h2 style="margin-bottom:10px">Who spent</h2><div class="split" id="splitBar"></div><div class="legend" id="splitLegend" style="margin-top:8px"></div></div>
     <div class="card"><h2 style="margin-bottom:10px">Biggest in this period</h2><ul class="list" id="bigList" style="border:0;border-radius:0"></ul></div>
   </section>
 </main></div>

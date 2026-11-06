@@ -4,6 +4,15 @@
 function chartFrame(box, H, padL, padR, padT, padB){ const W=Math.max(280, box.clientWidth||340); return {W,H,padL,padR,padT,padB,iw:W-padL-padR,ih:H-padT-padB}; }
 function yGrid(f, niceMax, ticks){ let s=''; ticks.forEach(fr=>{ const yy=f.padT+f.ih-fr*f.ih; s+=`<line class="gl" x1="${f.padL}" x2="${f.W-f.padR}" y1="${yy.toFixed(1)}" y2="${yy.toFixed(1)}"/><text x="${f.padL-6}" y="${(yy+4).toFixed(1)}" text-anchor="end">${esc(fmtShort(niceMax*fr))}</text>`; }); return s; }
 function linePath(pts){ if(!pts.length) return ''; let d=`M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`; for(let i=1;i<pts.length;i++){ const [x0,y0]=pts[i-1],[x1,y1]=pts[i]; const cx=(x0+x1)/2; d+=` C${cx.toFixed(1)},${y0.toFixed(1)} ${cx.toFixed(1)},${y1.toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`; } return d; }
+/** A bar rounded at its top only, so the data end is soft and the baseline end stays square. */
+function barTop(x,y,w,h,r){ r=Math.min(r,w/2,h); return `M${x.toFixed(1)},${(y+h).toFixed(1)} V${(y+r).toFixed(1)} a${r},${r} 0 0 1 ${r},-${r} H${(x+w-r).toFixed(1)} a${r},${r} 0 0 1 ${r},${r} V${(y+h).toFixed(1)} Z`; }
+/** Shared tooltip wiring: `find(ev)` returns an index (or null) and `html(i)` the tooltip; the tip sits above the element that `anchor(i)` returns. */
+function chartTip(box, svg, find, html, anchor){
+  const tip=box.querySelector('.tip');
+  const show=ev=>{ const i=find(ev); if(i==null){ tip.classList.add('hide'); return; } tip.innerHTML=html(i); tip.classList.remove('hide'); const r=box.getBoundingClientRect(); const a=anchor(i); tip.style.left=(a.x-r.left)+'px'; tip.style.top=Math.max(26,(a.y-r.top))+'px'; };
+  svg.addEventListener('pointermove',show); svg.addEventListener('pointerdown',show); svg.addEventListener('pointerleave',()=>tip.classList.add('hide'));
+}
+const SW=(c)=>`<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${c};margin-right:5px"></span>`;
 function lineChart(box, f, series, xLabels, opts){
   // series: [{name,color,values:[number|null],dashed?}] all same length; xLabels: strings per index
   const n=xLabels.length; let max=0; series.forEach(s=>s.values.forEach(v=>{ if(v!=null&&v>max) max=v; })); const niceMax=niceCeil(max||1);
@@ -26,52 +35,136 @@ function lineChart(box, f, series, xLabels, opts){
   s+='</svg><div class="tip hide"></div>'; box.innerHTML=s;
   const svg=box.querySelector('svg'), tip=box.querySelector('.tip'), xh=svg.querySelector('#xh'), hit=svg.querySelector('#hit');
   const show=ev=>{ const r=svg.getBoundingClientRect(); const px=(ev.clientX-r.left)*(f.W/r.width); let i=n>1? Math.round((px-f.padL)/f.iw*(n-1)) : 0; i=Math.max(0,Math.min(n-1,i)); const xx=x(i); xh.setAttribute('x1',xx); xh.setAttribute('x2',xx); xh.setAttribute('opacity','1');
-    tip.innerHTML=`${esc(opts.tipTitle? opts.tipTitle(i) : xLabels[i])}<br>`+series.map(sr=> sr.values[i]==null? '' : `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${sr.color};margin-right:5px"></span>${esc(sr.name)} <b>${esc(fmtBase(sr.values[i]))}</b>`).filter(Boolean).join('<br>');
-    tip.classList.remove('hide'); const bx=box.getBoundingClientRect(); tip.style.left=(xx*(r.width/f.W))+'px'; tip.style.top=Math.max(26,(f.padT*(r.height/f.H)))+'px'; };
+    tip.innerHTML=`${esc(opts.tipTitle? opts.tipTitle(i) : xLabels[i])}<br>`+series.map(sr=> sr.values[i]==null? '' : `${SW(sr.color)}${esc(sr.name)} <b>${esc(fmtBase(sr.values[i]))}</b>`).filter(Boolean).join('<br>');
+    tip.classList.remove('hide'); tip.style.left=(xx*(r.width/f.W))+'px'; tip.style.top=Math.max(26,(f.padT*(r.height/f.H)))+'px'; };
   hit.addEventListener('pointermove',show); hit.addEventListener('pointerdown',show); svg.addEventListener('pointerleave',()=>{ tip.classList.add('hide'); xh.setAttribute('opacity','0'); });
 }
-function drawDailyLines(mk, st){
+function drawDailyLines(mk, st, who){
   const box=$('lineChart'); const f=chartFrame(box,190,44,14,16,24);
-  const pm=shiftMonth(mk,-1); const pv=monthStats(pm); const dim=st.dim; const today = mk===monthKey(new Date()) ? Number(todayKey().slice(8,10)) : dim;
+  const pm=shiftMonth(mk,-1); const pv=monthStats(pm, who); const dim=st.dim; const today = mk===monthKey(new Date()) ? Number(todayKey().slice(8,10)) : dim;
   const cum=[], pcum=[]; let a=0,b=0; for(let d=1;d<=dim;d++){ a+=st.byDay[d]||0; cum.push(d<=today? a : null); if(d<=pv.dim){ b+=pv.byDay[d]||0; pcum.push(b); } else pcum.push(null); }
-  const hasPrev=pv.total>0;
+  const hasPrev=pv.total>0; const col = who? memberColor(who) : 'var(--p1)';
   const labels=[]; for(let d=1;d<=dim;d++) labels.push(String(d));
-  lineChart(box, f, [ {name:monthShort(mk),color:'var(--p1)',values:cum}, ...(hasPrev? [{name:monthShort(pm),color:'var(--p2)',values:pcum,dashed:true}] : []) ], labels, {aria:'Cumulative spending by day', tipTitle:i=>`${monthShort(mk).split(' ')[0]} ${i+1}`, maxXLabels:7});
-  $('lineTitle').textContent='Running total'; $('lineSub').textContent='day by day';
-  $('lineLegend').innerHTML = `<span><i class="sw" style="background:var(--p1)"></i>${esc(monthLabel(mk))}</span>`+(hasPrev? `<span><i class="sw" style="background:var(--p2);opacity:.8"></i>${esc(monthLabel(pm))} (dashed)</span>` : '');
+  lineChart(box, f, [ {name:monthShort(mk),color:col,values:cum}, ...(hasPrev? [{name:monthShort(pm),color:'var(--muted)',values:pcum,dashed:true}] : []) ], labels, {aria:'Cumulative spending by day', tipTitle:i=>`${monthShort(mk).split(' ')[0]} ${i+1}`, maxXLabels:7});
+  $('lineTitle').textContent='Running total'; $('lineSub').textContent=(who? who+"'s" : '')+' day by day';
+  $('lineLegend').innerHTML = `<span><i class="sw" style="background:${col}"></i>${esc(monthLabel(mk))}</span>`+(hasPrev? `<span><i class="sw" style="background:var(--muted);opacity:.8"></i>${esc(monthLabel(pm))} (dashed)</span>` : '');
 }
-function drawMonthlyLines(per, fixed){
-  const box=$('lineChart'); const f=chartFrame(box,190,44,14,16,24);
-  const dd=per.map(p=>p.st.total); const allin=per.map(p=>p.st.total+fixed); const labels=per.map(p=>monthShort(p.mk));
-  const series=[{name:'Day-to-day',color:'var(--p1)',values:dd}]; if(fixed>0) series.push({name:'With fixed costs',color:'var(--p4)',values:allin,dashed:true});
-  lineChart(box, f, series, labels, {aria:'Spending per month', maxXLabels:6});
-  $('lineTitle').textContent='Spending per month'; $('lineSub').textContent=per.length+' months';
-  $('lineLegend').innerHTML = series.map(s=>`<span><i class="sw" style="background:${s.color}"></i>${esc(s.name)}</span>`).join('');
-}
-function drawCategoryBars(per, agg){
-  const box=$('barChart'); const grouped = per.length>=2 && per.length<=4;
-  const cats=Object.entries(agg.byTag).sort((a,b)=>b[1]-a[1]).slice(0,8).map(x=>x[0]);
-  if(!cats.length){ box.innerHTML='<div class="faint" style="font-size:13px;padding:8px 0">Categories appear as you log expenses.</div>'; $('barLegend').innerHTML=''; $('barSub').textContent=''; return; }
-  const f=chartFrame(box, 236, 44, 8, 18, 58);
-  const series = grouped ? per.map((p,i)=>({name:monthShort(p.mk), color:PCOL[i], values:cats.map(c=>p.st.byTag[c]||0)})) : [{name:'Total', color:'var(--p1)', values:cats.map(c=>agg.byTag[c])}];
-  let max=0; series.forEach(s=>s.values.forEach(v=>{ if(v>max) max=v; })); const niceMax=niceCeil(max||1);
-  const slot=f.iw/cats.length; const groupW=Math.min(slot*0.78, grouped? 60 : 40); const bw=grouped? (groupW-2*(series.length-1))/series.length : groupW;
-  const y=v=>f.padT+f.ih-(v/niceMax)*f.ih;
-  let s=`<svg viewBox="0 0 ${f.W} ${f.H}" width="${f.W}" height="${f.H}" role="img" aria-label="Spending by category">`;
+/** One bar per month; in the household view each bar is stacked by person. */
+function drawMonthlyBars(per, who){
+  const box=$('lineChart'); const f=chartFrame(box,200,44,10,22,24); const members=S.settings.members||[]; const stacked=!who && members.length>1;
+  const totals=per.map(p=>p.st.total); const niceMax=niceCeil(Math.max(...totals,1)); const n=per.length;
+  const slot=f.iw/n; const bw=Math.min(slot*0.62, 36); const y=v=>f.padT+f.ih-(v/niceMax)*f.ih;
+  const segsOf=p=>{ const list = stacked? members.map(m=>({name:m, v:p.st.byPerson[m]||0, color:memberColor(m)})) : [{name:who||'Day-to-day', v:p.st.total, color: who? memberColor(who) : 'var(--p1)'}]; if(stacked){ const other=p.st.total-list.reduce((a,x)=>a+x.v,0); if(other>0.5) list.push({name:'Unknown', v:other, color:'var(--faint)'}); } return list.filter(x=>x.v>0); };
+  let s=`<svg viewBox="0 0 ${f.W} ${f.H}" width="${f.W}" height="${f.H}" role="img" aria-label="Spending per month">`;
   s+=yGrid(f,niceMax,[0.5,1]); s+=`<line class="base" x1="${f.padL}" x2="${f.W-f.padR}" y1="${f.padT+f.ih}" y2="${f.padT+f.ih}"/>`;
-  cats.forEach((c,ci)=>{ const gx=f.padL+ci*slot+(slot-groupW)/2;
-    series.forEach((sr,si)=>{ const v=sr.values[ci]; const h=v? Math.max(2,(v/niceMax)*f.ih) : 0; const x=gx+si*(bw+2); s+=`<rect data-c="${ci}" data-s="${si}" x="${x.toFixed(1)}" y="${(f.padT+f.ih-h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="4" fill="${sr.color}"/>`; });
-    if(!grouped){ const v=series[0].values[ci]; s+=`<text class="lbl" x="${(gx+groupW/2).toFixed(1)}" y="${(y(v)-6).toFixed(1)}" text-anchor="middle">${esc(fmtShort(v))}</text>`; }
-    const lx=(gx+groupW/2).toFixed(1), ly=(f.padT+f.ih+10).toFixed(1); s+=`<text x="${lx}" y="${ly}" text-anchor="end" transform="rotate(-38 ${lx} ${ly})" font-size="11">${esc(c)}</text>`;
-    s+=`<rect data-c="${ci}" x="${(f.padL+ci*slot).toFixed(1)}" y="${f.padT}" width="${slot.toFixed(1)}" height="${f.ih}" fill="transparent"/>`; });
-  s+='</svg><div class="tip hide"></div>'; box.innerHTML=s;
-  const svg=box.querySelector('svg'), tip=box.querySelector('.tip');
-  const show=ev=>{ const el=ev.target.closest('rect[data-c]'); if(!el){ tip.classList.add('hide'); return; } const ci=Number(el.dataset.c); const r=box.getBoundingClientRect(); const b=el.getBoundingClientRect();
-    tip.innerHTML=`${esc(cats[ci])}<br>`+series.map(sr=>`<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${sr.color};margin-right:5px"></span>${esc(sr.name)} <b>${esc(fmtBase(sr.values[ci]))}</b>`).join('<br>')+(grouped?'':`<br><span style="opacity:.7">${Math.round(series[0].values[ci]/(agg.total||1)*100)}% of spending</span>`);
-    tip.classList.remove('hide'); tip.style.left=(b.left-r.left+b.width/2)+'px'; tip.style.top=Math.max(30,(b.top-r.top))+'px'; };
-  svg.addEventListener('pointermove',show); svg.addEventListener('pointerdown',show); svg.addEventListener('pointerleave',()=>tip.classList.add('hide'));
-  $('barSub').textContent = grouped? 'per month' : (per.length>4? 'total over '+per.length+' months' : 'top categories');
-  $('barLegend').innerHTML = grouped? series.map(s=>`<span><i class="sw" style="background:${s.color}"></i>${esc(s.name)}</span>`).join('') : '';
+  per.forEach((p,i)=>{ const x=f.padL+i*slot+(slot-bw)/2; const segs=segsOf(p); let top=f.padT+f.ih;
+    segs.forEach((sg,si)=>{ const h=Math.max(1.5,(sg.v/niceMax)*f.ih); const yy=top-h; const last=si===segs.length-1; s+= last? `<path d="${barTop(x,yy,bw,h,4)}" fill="${sg.color}"/>` : `<rect x="${x.toFixed(1)}" y="${yy.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${sg.color}"/>`; top=yy-2; });
+    if(n<=8 && p.st.total>0) s+=`<text class="lbl" x="${(x+bw/2).toFixed(1)}" y="${(y(p.st.total)-6).toFixed(1)}" text-anchor="middle">${esc(fmtShort(p.st.total))}</text>`;
+    if(n<=8 || i%Math.ceil(n/8)===0 || i===n-1) s+=`<text x="${(x+bw/2).toFixed(1)}" y="${f.H-6}" text-anchor="middle">${esc(monthShort(p.mk))}</text>`;
+    s+=`<rect data-i="${i}" x="${(f.padL+i*slot).toFixed(1)}" y="${f.padT}" width="${slot.toFixed(1)}" height="${f.ih}" fill="transparent"/>`; });
+  s+='</svg><div class="tip hide"></div>'; box.innerHTML=s; const svg=box.querySelector('svg');
+  chartTip(box, svg, ev=>{ const el=ev.target.closest('rect[data-i]'); return el? Number(el.dataset.i) : null; },
+    i=>{ const p=per[i]; return `${esc(monthLabel(p.mk))}<br>`+segsOf(p).map(sg=>`${SW(sg.color)}${esc(sg.name)} <b>${esc(fmtBase(Math.round(sg.v)))}</b>`).join('<br>')+(stacked? `<br>Total <b>${esc(fmtBase(Math.round(p.st.total)))}</b>` : '')+(p.st.fixed? `<br><span style="opacity:.7">+ fixed ${esc(fmtShort(p.st.fixed))}</span>` : ''); },
+    i=>{ const r=svg.getBoundingClientRect(); const x=f.padL+i*slot+slot/2; return {x:r.left+x*(r.width/f.W), y:r.top+y(per[i].st.total)*(r.height/f.H)}; });
+  $('lineTitle').textContent='Spending per month'; $('lineSub').textContent=n+' months'+(who? ' · '+who : '');
+  $('lineLegend').innerHTML = stacked? members.map(m=>`<span><i class="sw" style="background:${memberColor(m)}"></i>${esc(m)}</span>`).join('') : `<span><i class="sw" style="background:${who? memberColor(who) : 'var(--p1)'}"></i>Day-to-day</span>`;
+}
+function arcPath(cx,cy,R,r,a0,a1){ const p=(rad,a)=>[cx+rad*Math.sin(a), cy-rad*Math.cos(a)]; const [x0,y0]=p(R,a0),[x1,y1]=p(R,a1),[x2,y2]=p(r,a1),[x3,y3]=p(r,a0); const big=a1-a0>Math.PI?1:0; return `M${x0.toFixed(2)},${y0.toFixed(2)} A${R},${R} 0 ${big} 1 ${x1.toFixed(2)},${y1.toFixed(2)} L${x2.toFixed(2)},${y2.toFixed(2)} A${r},${r} 0 ${big} 0 ${x3.toFixed(2)},${y3.toFixed(2)} Z`; }
+/** Where the money went: the five biggest categories and "Other", total in the middle, legend with amounts and shares. */
+function drawDonut(agg, colors, who){
+  const box=$('donutChart'), leg=$('donutLegend'); const cats=Object.entries(agg.byTag).sort((a,b)=>b[1]-a[1]); const total=agg.total;
+  if(!cats.length || !total){ box.innerHTML=''; leg.innerHTML='<div class="faint" style="font-size:13px">Categories appear as you log expenses.</div>'; $('donutSub').textContent=''; return; }
+  const top=cats.slice(0,5), rest=cats.slice(5);
+  const parts=top.map(([t,v])=>({name:t, icon:TAG_ICON[t]||'', value:v, color:colors[t]||'var(--faint)'}));
+  if(rest.length) parts.push({name:'Other', sub:rest.map(x=>(TAG_ICON[x[0]]||'')+' '+x[0]).join(', '), value:rest.reduce((a,x)=>a+x[1],0), color:'var(--other)'});
+  const R=80, r=56; let a=0; let s=`<svg viewBox="0 0 160 160" width="160" height="160" role="img" aria-label="Share of spending by category">`;
+  parts.forEach((p,i)=>{ const a1=a+p.value/total*2*Math.PI;
+    s+= parts.length===1? `<circle data-i="0" cx="80" cy="80" r="${(R+r)/2}" fill="none" stroke="${p.color}" stroke-width="${R-r}"/>` : `<path data-i="${i}" d="${arcPath(80,80,R,r,a,Math.min(a1,a+2*Math.PI-1e-4))}" fill="${p.color}" stroke="var(--surface)" stroke-width="2" stroke-linejoin="round"/>`;
+    a=a1; });
+  s+=`<text class="ctr-v" x="80" y="78" text-anchor="middle">${esc(fmtShort(total))}</text><text class="ctr-k" x="80" y="94" text-anchor="middle">${who? esc(who) : 'day-to-day'}</text></svg><div class="tip hide"></div>`;
+  box.innerHTML=s;
+  leg.innerHTML=parts.map((p,i)=>`<div class="row" data-i="${i}"><i class="sw" style="background:${p.color}"></i><span class="n">${p.icon? esc(p.icon)+' ' : ''}${esc(p.name)}${p.sub? ` <small>${esc(p.sub)}</small>` : ''}</span><b>${esc(fmtShort(p.value))}</b><span class="pc">${Math.round(p.value/total*100)}%</span></div>`).join('');
+  $('donutSub').textContent = cats.length+' categor'+(cats.length===1?'y':'ies');
+  const svg=box.querySelector('svg'), tip=box.querySelector('.tip'); const marks=[...svg.querySelectorAll('[data-i]')];
+  const focus=i=>{ marks.forEach(m=>m.style.opacity = (i==null||Number(m.dataset.i)===i)? '1' : '.3'); leg.querySelectorAll('.row').forEach(rw=>rw.classList.toggle('on', i!=null && Number(rw.dataset.i)===i));
+    if(i==null){ tip.classList.add('hide'); return; } const p=parts[i]; tip.innerHTML=`${esc(p.name)} <b>${esc(fmtBase(Math.round(p.value)))}</b> · ${Math.round(p.value/total*100)}%`; tip.classList.remove('hide'); const bb=box.getBoundingClientRect(), m=marks[i].getBoundingClientRect(); tip.style.left=(m.left-bb.left+m.width/2)+'px'; tip.style.top=Math.max(26,(m.top-bb.top))+'px'; };
+  const pick=ev=>{ const el=ev.target.closest('[data-i]'); focus(el? Number(el.dataset.i) : null); };
+  svg.addEventListener('pointermove',pick); svg.addEventListener('pointerdown',pick); svg.addEventListener('pointerleave',()=>focus(null));
+  leg.onclick=ev=>{ const el=ev.target.closest('.row'); if(!el) return; focus(el.classList.contains('on')? null : Number(el.dataset.i)); };
+}
+/** Ranked horizontal bars, one per category; stacked by person in the household view, with a tick for the period before. */
+function drawCategoryBars(agg, prior, who, isCur, st, colors){
+  const box=$('barChart'); const members=S.settings.members||[]; const stacked=!who && members.length>1;
+  let rows=Object.entries(agg.byTag).sort((a,b)=>b[1]-a[1]);
+  if(!rows.length){ box.innerHTML='<div class="faint" style="font-size:13px;padding:8px 0">Categories appear as you log expenses.</div>'; $('barLegend').innerHTML=''; $('barSub').textContent=''; return; }
+  const MAXR=9; let rest=null; if(rows.length>MAXR){ const r=rows.slice(MAXR); rest=['Everything else', r.reduce((a,x)=>a+x[1],0), r.map(x=>x[0])]; rows=rows.slice(0,MAXR); }
+  const scale = isCur&&st ? st.elapsed/st.dim : 1; const hasPrior=prior.total>0;   // a month in progress is compared with the same share of last month
+  const prev=t=>(prior.byTag[t]||0)*scale;
+  const max=Math.max(...rows.map(([t,v])=>Math.max(v, hasPrior? prev(t) : 0)), rest? rest[1] : 0, 1)*1.02;
+  const segs=(t,v)=>{ if(!stacked) return [{name:who||'Total', v, color: who? memberColor(who) : 'var(--p1)'}]; const o=agg.byTagBy[t]||{}; const list=members.map(m=>({name:m, v:o[m]||0, color:memberColor(m)})); const other=v-list.reduce((a,x)=>a+x.v,0); if(other>0.5) list.push({name:'Unknown', v:other, color:'var(--faint)'}); return list.filter(x=>x.v>0); };
+  const row=(t,v,i,icon)=>`<div class="hbar" data-i="${i}"><span class="hl">${icon? esc(icon)+' ' : ''}${esc(t)}</span><span class="htrack">${segs(t,v).map(x=>`<i style="width:${(x.v/max*100).toFixed(2)}%;background:${x.color}"></i>`).join('')}${hasPrior && prev(t)>0 && t!=='Everything else'? `<b class="prev" style="left:${Math.min(100,prev(t)/max*100).toFixed(2)}%"></b>` : ''}</span><span class="hv num">${esc(fmtShort(v))}</span></div>`;
+  box.innerHTML = rows.map(([t,v],i)=>row(t,v,i,TAG_ICON[t])).join('') + (rest? row(rest[0],rest[1],'rest','') : '') + '<div class="tip hide"></div>';
+  const tip=box.querySelector('.tip'); const tot=agg.total||1;
+  const html=i=>{ if(i==='rest') return `${esc(rest[2].join(', '))}<br>Total <b>${esc(fmtBase(Math.round(rest[1])))}</b> · ${Math.round(rest[1]/tot*100)}%`; const [t,v]=rows[i]; const pv=prev(t); const d = hasPrior && pv>0? Math.round((v-pv)/pv*100) : null;
+    return `${esc(t)} <b>${esc(fmtBase(Math.round(v)))}</b> · ${Math.round(v/tot*100)}%`+(stacked? '<br>'+segs(t,v).map(x=>`${SW(x.color)}${esc(x.name)} <b>${esc(fmtShort(x.v))}</b>`).join(' ') : '')+(d!=null? `<br><span style="opacity:.75">${d>0?'▲':d<0?'▼':'•'} ${Math.abs(d)}% vs ${isCur? "last month's pace" : prior.months>1? 'the '+prior.months+' months before' : 'last month'}</span>` : (hasPrior? '<br><span style="opacity:.75">nothing here last time</span>' : '')); };
+  const show=ev=>{ const el=ev.target.closest('.hbar'); box.querySelectorAll('.hbar.on').forEach(x=>x.classList.remove('on')); if(!el){ tip.classList.add('hide'); return; } el.classList.add('on'); const i=el.dataset.i==='rest'? 'rest' : Number(el.dataset.i); tip.innerHTML=html(i); tip.classList.remove('hide'); const bb=box.getBoundingClientRect(), tr=el.querySelector('.htrack').getBoundingClientRect(); tip.style.left=(tr.left-bb.left+Math.min(tr.width/2, 120))+'px'; tip.style.top=Math.max(26,(tr.top-bb.top))+'px'; };
+  box.onpointermove=show; box.onpointerdown=show; box.onpointerleave=()=>{ tip.classList.add('hide'); box.querySelectorAll('.hbar.on').forEach(x=>x.classList.remove('on')); };
+  $('barSub').textContent = (who? who+"'s " : '')+'biggest first';
+  $('barLegend').innerHTML = (stacked? members.map(m=>`<span><i class="sw" style="background:${memberColor(m)}"></i>${esc(m)}</span>`).join('') : '')+(hasPrior? `<span><i class="sw prevsw"></i>${isCur? "last month's pace" : prior.months>1? 'the '+prior.months+' months before' : 'last month'}</span>` : '');
+}
+/** Income down to what is left: a waterfall of fixed costs and the biggest categories (or, without income, the build-up of all spending). */
+function drawWaterfall(agg, n, who, isCur, inc){
+  const box=$('flowChart'), leg=$('flowLegend'); const fixed=agg.fixed*n; const tot=agg.total; const income=inc*n;
+  if(!tot && !fixed && !income){ box.innerHTML='<div class="faint" style="font-size:13px;padding:8px 0">Add income in Plan to see what is left after spending.</div>'; leg.innerHTML=''; $('flowSub').textContent=''; return; }
+  const cats=Object.entries(agg.byTag).sort((a,b)=>b[1]-a[1]); const top=cats.slice(0,3); const restV=cats.slice(3).reduce((a,x)=>a+x[1],0);
+  const steps=[]; const sign = income>0? -1 : 1;
+  if(income>0) steps.push({name:'Income', v:income, kind:'in'});
+  if(fixed>0) steps.push({name:'Fixed', v:sign*fixed, kind:'out', note:'fixed costs'});
+  top.forEach(([t,v])=>steps.push({name:t, icon:TAG_ICON[t]||'', v:sign*v, kind:'out'}));
+  if(restV>0) steps.push({name:'Other', v:sign*restV, kind:'out', note:cats.slice(3).map(x=>x[0]).join(', ')});
+  steps.push({name: income>0? 'Left' : 'All in', kind:'end'});
+  let run=0; const bars=steps.map(s=>{ if(s.kind==='in'){ run=s.v; return {...s, a:0, b:run}; } if(s.kind==='end') return {...s, a:0, b:run, v:run}; const a=run; run+=s.v; return {...s, a, b:run}; });
+  const hi=Math.max(1, ...bars.map(b=>Math.max(b.a,b.b))), lo=Math.min(0, ...bars.map(b=>Math.min(b.a,b.b)));
+  const niceHi=niceCeil(hi), niceLo= lo<0? -niceCeil(-lo) : 0; const span=niceHi-niceLo;
+  const f=chartFrame(box, 236, 44, 8, 20, 56); const y=v=>f.padT+(niceHi-v)/span*f.ih; const slot=f.iw/bars.length; const bw=Math.min(slot*0.66, 44);
+  const colOf=b=> b.kind==='in'? 'var(--p3)' : b.kind==='end'? 'var(--muted)' : (income>0? 'var(--p2)' : 'var(--p1)');
+  let s=`<svg viewBox="0 0 ${f.W} ${f.H}" width="${f.W}" height="${f.H}" role="img" aria-label="${income>0? 'Income to what is left' : 'Spending build-up'}">`;
+  const ticks=[niceHi, 0]; if(niceLo<0) ticks.push(niceLo); ticks.push(niceHi>=-niceLo? niceHi/2 : niceLo/2);   // a midpoint on the taller side only
+  ticks.forEach(v=>{ const yy=y(v); s+=`<line class="${v===0?'base':'gl'}" x1="${f.padL}" x2="${f.W-f.padR}" y1="${yy.toFixed(1)}" y2="${yy.toFixed(1)}"/><text x="${f.padL-6}" y="${(yy+4).toFixed(1)}" text-anchor="end">${esc((v<0?'−':'')+fmtShort(Math.abs(v)))}</text>`; });
+  // value labels sit above their bar; when two neighbours would meet at the same height the step (never the total) drops below its bar
+  const geo=bars.map(b=>{ const top=y(Math.max(b.a,b.b)), bot=y(Math.min(b.a,b.b)); return {top, bot, ly: Math.max(top-6, 11)}; });
+  geo.forEach((g,i)=>{ if(!i || Math.abs(g.ly-geo[i-1].ly)>=12) return; if(bars[i].kind==='out') g.ly=g.bot+13; else if(bars[i-1].kind==='out') geo[i-1].ly=geo[i-1].bot+13; });
+  bars.forEach((b,i)=>{ const x=f.padL+i*slot+(slot-bw)/2; const {top,bot,ly}=geo[i]; const h=Math.max(2,bot-top);
+    s+=`<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="4" fill="${colOf(b)}"/>`;
+    if(i<bars.length-1){ const yy=y(b.b).toFixed(1); s+=`<line class="con" x1="${(x+bw).toFixed(1)}" x2="${(x+slot).toFixed(1)}" y1="${yy}" y2="${yy}"/>`; }
+    const lbl=(b.kind==='out'&&income>0? '−' : (b.kind==='end'&&b.v<0? '−' : ''))+fmtShort(Math.abs(b.v));
+    s+=`<text class="lbl" x="${(x+bw/2).toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle">${esc(lbl)}</text>`;
+    const lx=(x+bw/2).toFixed(1), ny=(f.padT+f.ih+12).toFixed(1); s+=`<text x="${lx}" y="${ny}" text-anchor="end" transform="rotate(-38 ${lx} ${ny})" font-size="11">${esc(b.name)}</text>`;
+    s+=`<rect data-i="${i}" x="${(f.padL+i*slot).toFixed(1)}" y="${f.padT}" width="${slot.toFixed(1)}" height="${f.ih}" fill="transparent"/>`; });
+  s+='</svg><div class="tip hide"></div>'; box.innerHTML=s; const svg=box.querySelector('svg');
+  const base = income>0? income : (tot+fixed||1);
+  chartTip(box, svg, ev=>{ const el=ev.target.closest('rect[data-i]'); return el? Number(el.dataset.i) : null; },
+    i=>{ const b=bars[i]; const v=Math.abs(b.v); const share=Math.round(v/base*100); return `${b.icon? esc(b.icon)+' ' : ''}${esc(b.name)}${b.note? ' <span style="opacity:.7">'+esc(b.note)+'</span>' : ''}<br><b>${(b.kind==='end'&&b.v<0? '−' : '')}${esc(fmtBase(Math.round(v)))}</b>`+(b.kind==='in'? '' : b.kind==='end'? (income>0? ` · ${share}% of income ${b.v>=0?'kept':'overspent'}` : '') : ` · ${share}% of ${income>0? 'income' : 'spending'}`); },
+    i=>{ const r=svg.getBoundingClientRect(); const b=bars[i]; return {x:r.left+(f.padL+i*slot+slot/2)*(r.width/f.W), y:r.top+y(Math.max(b.a,b.b))*(r.height/f.H)}; });
+  $('flowSub').textContent = [income>0? (n>1? n+' months' : (isCur? 'so far this month' : '')) : 'no income recorded', who||''].filter(Boolean).join(' · ');
+  leg.innerHTML = income>0? `<span><i class="sw" style="background:var(--p3)"></i>In</span><span><i class="sw" style="background:var(--p2)"></i>Out</span><span><i class="sw" style="background:var(--muted)"></i>Left</span>` : `<span><i class="sw" style="background:var(--p1)"></i>Spending</span><span><i class="sw" style="background:var(--muted)"></i>Total</span>`;
+}
+/** Average spend per weekday over the days in view. */
+function drawWeekday(per, who){
+  const card=$('wdCard'); const wd=weekdayProfile(per);
+  if(!wd || wd.days<7 || !wd.tot.some(v=>v>0)){ card.classList.add('hide'); return; } card.classList.remove('hide');
+  const box=$('wdChart'); const f=chartFrame(box,150,44,8,18,22); const order=[1,2,3,4,5,6,0]; const vals=order.map(i=>wd.avg[i]); const labels=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const niceMax=niceCeil(Math.max(...vals,1)); const slot=f.iw/7; const bw=Math.min(slot*0.58,34); const col= who? memberColor(who) : 'var(--p1)'; const maxI=vals.indexOf(Math.max(...vals)); const y=v=>f.padT+f.ih-(v/niceMax)*f.ih;
+  let s=`<svg viewBox="0 0 ${f.W} ${f.H}" width="${f.W}" height="${f.H}" role="img" aria-label="Average spending by weekday">`;
+  s+=yGrid(f,niceMax,[0.5,1]); s+=`<line class="base" x1="${f.padL}" x2="${f.W-f.padR}" y1="${f.padT+f.ih}" y2="${f.padT+f.ih}"/>`;
+  vals.forEach((v,i)=>{ const x=f.padL+i*slot+(slot-bw)/2; const h=v>0? Math.max(1.5,(v/niceMax)*f.ih) : 0; if(h) s+=`<path d="${barTop(x,y(v),bw,h,4)}" fill="${col}" ${i===maxI?'':'opacity=".72"'}/>`;
+    if(i===maxI && v>0) s+=`<text class="lbl" x="${(x+bw/2).toFixed(1)}" y="${(y(v)-6).toFixed(1)}" text-anchor="middle">${esc(fmtShort(v))}</text>`;
+    s+=`<text x="${(x+bw/2).toFixed(1)}" y="${f.H-6}" text-anchor="middle">${labels[i]}</text><rect data-i="${i}" x="${(f.padL+i*slot).toFixed(1)}" y="${f.padT}" width="${slot.toFixed(1)}" height="${f.ih}" fill="transparent"/>`; });
+  s+='</svg><div class="tip hide"></div>'; box.innerHTML=s; const svg=box.querySelector('svg');
+  chartTip(box, svg, ev=>{ const el=ev.target.closest('rect[data-i]'); return el? Number(el.dataset.i) : null; },
+    i=>`${DAY_NAMES[order[i]]}s: <b>${esc(fmtBase(Math.round(vals[i])))}</b> a day on average<br><span style="opacity:.75">${wd.occ[order[i]]} of them · ${esc(fmtShort(wd.tot[order[i]]))} in total</span>`,
+    i=>{ const r=svg.getBoundingClientRect(); return {x:r.left+(f.padL+i*slot+slot/2)*(r.width/f.W), y:r.top+y(vals[i])*(r.height/f.H)}; });
+  $('wdSub').textContent='average per day over '+wd.days+' days'+(who? ' · '+who : '');
 }
 
 // ---------- sheets ----------
@@ -318,7 +411,7 @@ async function submitNote(source){
 $('aiBtn').onclick=async()=>{
   const out=$('aiOut'); out.textContent='Thinking…'; $('aiStatus').textContent=''; S.aiCtl=new AbortController(); renderInsights();
   try{
-    const res=await fetch('/api/analyze',{method:'POST',headers:{'content-type':'application/json','x-ledger-key':S.key},body:JSON.stringify({months:S.range, today:todayKey()}),signal:S.aiCtl.signal});
+    const res=await fetch('/api/analyze',{method:'POST',headers:{'content-type':'application/json','x-ledger-key':S.key},body:JSON.stringify({months:S.range, by:viewName()||undefined, today:todayKey()}),signal:S.aiCtl.signal});
     if(!res.ok){ const d=await res.json().catch(()=>({})); throw new Error(d.error||('Request failed ('+res.status+')')); }
     const reader=res.body.getReader(); const dec=new TextDecoder(); let txt='';
     while(true){ const {value,done}=await reader.read(); if(done) break; txt+=dec.decode(value,{stream:true}); out.textContent=txt; }
