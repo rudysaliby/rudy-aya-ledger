@@ -114,7 +114,7 @@ function drawCategoryBars(agg, prior, who, isCur, st, colors){
 }
 /** Income down to what is left: a waterfall of fixed costs and the biggest categories (or, without income, the build-up of all spending). */
 function drawWaterfall(agg, n, who, isCur, inc){
-  const box=$('flowChart'), leg=$('flowLegend'); const fixed=agg.fixed*n; const tot=agg.total; const income=inc*n;
+  const box=$('flowChart'), leg=$('flowLegend'); const fixed=agg.fixedTotal!=null? agg.fixedTotal : agg.fixed*n; const tot=agg.total; const income=inc*n;
   if(!tot && !fixed && !income){ box.innerHTML='<div class="faint" style="font-size:13px;padding:8px 0">Add income in Plan to see what is left after spending.</div>'; leg.innerHTML=''; $('flowSub').textContent=''; return; }
   const cats=Object.entries(agg.byTag).sort((a,b)=>b[1]-a[1]); const top=cats.slice(0,3); const restV=cats.slice(3).reduce((a,x)=>a+x[1],0);
   const steps=[]; const sign = income>0? -1 : 1;
@@ -181,6 +181,10 @@ function openExpenseSheet(e){
   const members=S.settings.members||[];
   // a new expense defaults to this member's usual account; an existing one keeps its account, or stays untracked
   const fromSel = isNew ? (d.from && accById(d.from)? d.from : 'auto') : (d.from && accById(d.from)? d.from : 'none');
+  // "counts as": what the app would recognise on its own (ignoring any choice made by hand on this expense), and what applies now
+  const recs=S.recurring.filter(r=>r.active!==false);
+  const auto = isNew||!e.month ? '' : (linkFixed(monthItems(e.month).map(x=>x.id===e.id? {...x, recSet:undefined, recId:undefined} : x), recsForLinks()).get(e.id) || '');
+  const curRec = isNew ? '' : (d.recSet==='user' ? (d.recId||'') : auto);
   openSheet(`<div class="grab"></div><h3>${isNew?'New expense':'Edit expense'}</h3><div class="form">
     <div class="grid2"><div class="field"><label for="f-amount">Amount</label><input class="num" id="f-amount" type="number" inputmode="decimal" step="any" value="${esc(d.amount)}" placeholder="0"></div>
     <div class="field"><label for="f-cur">Currency</label><select id="f-cur">${CURRENCIES.map(c=>`<option ${c===d.currency?'selected':''}>${c}</option>`).join('')}</select></div></div>
@@ -189,6 +193,7 @@ function openExpenseSheet(e){
     <div class="grid2"><div class="field"><label>Paid by</label><div class="chips">${chipsHTML('by',members,d.by,true)}</div></div>
     <div class="field"><label for="f-date">Date</label><input id="f-date" type="date" value="${esc(d.date)}"></div></div>
     <div class="field"><label for="f-from">Paid from</label><select id="f-from"><option value="auto" ${fromSel==='auto'?'selected':''}>Default for ${esc(d.by||S.who||'this person')} (${esc(((S.settings.defaultPaid||{})[d.by||S.who]||'cash'))})</option>${accOptgroups(flowAccounts(), fromSel)}<option value="none" ${fromSel==='none'?'selected':''}>Not tracked</option></select></div>
+    ${!isNew && recs.length? `<div class="field"><label for="f-rec">Counts as</label><select id="f-rec"><option value="" ${!curRec?'selected':''}>Day-to-day spending</option>${recs.map(r=>`<option value="${esc(r.id)}" ${curRec===r.id?'selected':''}>Fixed cost · ${esc(r.name)}</option>`).join('')}</select><div class="muted" style="font-size:12.5px;margin-top:4px">${auto? (curRec===auto? 'Recognised as a payment of '+esc((recById(auto)||{}).name||'a fixed cost')+' from its name and amount, so it is not counted again as day-to-day.' : 'Would be recognised as '+esc((recById(auto)||{}).name||'a fixed cost')+'; your choice wins.') : 'A payment of a fixed cost from Plan is counted there, not as day-to-day.'}</div></div>` : ''}
     <div class="field"><label for="f-note">Note</label><input id="f-note" value="${esc(d.note||'')}" placeholder="Optional"></div>
     <div class="actions"><div>${isNew?'':'<button type="button" class="danger" id="f-del">Delete</button>'}</div><div class="right"><button type="button" class="secondary" id="f-cancel">Cancel</button><button type="button" class="primary" id="f-save">${isNew?'Add':'Save'}</button></div></div>
   </div>`, root=>{
@@ -197,6 +202,7 @@ function openExpenseSheet(e){
     if(!isNew) $('f-del').onclick=async()=>{ if($('f-del').dataset.arm){ try{ await api('expense',{method:'DELETE',body:{id:e.id,month:e.month}}); removeLocal(e.id,e.month); closeSheet(); toast('Deleted'); load(); }catch(err){ toast(errMsg(err)); } } else { $('f-del').dataset.arm='1'; $('f-del').textContent='Tap again to delete'; } };
     $('f-save').onclick=async()=>{ const amount=Number($('f-amount').value); if(!(amount>0)){ $('f-amount').focus(); return; }
       const ex={ id:e.id, amount, currency:$('f-cur').value, desc:$('f-desc').value.trim()||chipVal(root,'tag')||'Expense', tag:chipVal(root,'tag')||'Other', by:chipVal(root,'by')||S.who||'', date:$('f-date').value||todayKey(), note:$('f-note').value.trim()||null, from:$('f-from').value||'auto' };
+      if(!isNew && $('f-rec')){ const v=$('f-rec').value; if(v!==auto){ ex.recSet='user'; ex.recId=v; } else if(d.recSet==='user'){ ex.recSet=null; } }   // a choice that matches what is recognised anyway goes back to automatic
       $('f-save').disabled=true;
       try{ let r; if(isNew) r=await api('expense',{method:'POST',body:{expense:ex, by:S.who||'', source:'manual'}}); else r=await api('expense',{method:'PUT',body:{month:e.month, expense:ex}});
         if(!isNew) removeLocal(e.id,e.month); (r.saved||[]).forEach(addLocal); closeSheet(); toast(isNew? 'Added '+fmtBase(r.saved[0].usd)+' · '+r.saved[0].desc : 'Saved'); load(); }

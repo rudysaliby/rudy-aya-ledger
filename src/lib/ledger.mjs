@@ -211,12 +211,18 @@ export async function saveExpenses(settings, items, {by, source}){
 }
 
 // ---------- analysis ----------
-export function monthStats(settings, items, recurring, mk, today){
+/**
+ * Totals for one month. `items` are the day-to-day expenses (payments of fixed costs already taken out, see fixed.mjs);
+ * `paidBy` says what was paid this month per fixed cost: a monthly cost that was paid counts at what was paid, the
+ * rest at their planned amount, yearly ones at a twelfth — so nothing is counted twice.
+ */
+export function monthStats(settings, items, recurring, mk, today, paidBy={}){
   const byTag={}, byPerson={}; let total=0; const byDay={};
   for(const e of items){ total+=e.usd; byTag[e.tag]=(byTag[e.tag]||0)+e.usd; const p=e.by||'Unknown'; byPerson[p]=(byPerson[p]||0)+e.usd; const d=Number(e.date.slice(8,10)); byDay[d]=(byDay[d]||0)+e.usd; }
-  const fixed=recurring.filter(r=>r.active!==false).reduce((a,r)=>{ const u=toUSD(settings,r.amount,r.currency); return a+(r.period==='yearly'?u/12:u); },0);
+  let fixed=0, paidN=0;
+  for(const r of recurring.filter(r=>r.active!==false)){ const u=toUSD(settings,r.amount,r.currency); const planned=r.period==='yearly'?u/12:u; if(paidBy[r.id]!=null){ paidN++; fixed += r.period==='yearly'? planned : paidBy[r.id]; } else fixed+=planned; }
   const dim=daysInMonth(mk); const cm=today.slice(0,7); const elapsed = mk===cm? Number(today.slice(8,10)) : (mk<cm? dim : 0);
-  return {items,total,byTag,byPerson,byDay,fixed,dim,elapsed,count:items.length};
+  return {items,total,byTag,byPerson,byDay,fixed,paidN,dim,elapsed,count:items.length};
 }
 export const monthLabel=k=>{ const [y,m]=k.split('-').map(Number); return new Date(Date.UTC(y,m-1,1)).toLocaleString('en-US',{month:'long',year:'numeric',timeZone:'UTC'}); };
 /** Prefix for a one-person view, so the coach talks about that person's money and not the household's. */
@@ -238,7 +244,7 @@ By category: ${tagLine(st)}. By person: ${perLine(st)}.
 Largest items: ${big}.
 Previous month (${label(shiftMonth(mk,-1))}, full): total ${usd(m1.total)}; by category: ${tagLine(m1)}; by person: ${perLine(m1)}.
 Two months ago (${label(shiftMonth(mk,-2))}): total ${usd(m2.total)}; by category: ${tagLine(m2)}.
-Fixed monthly costs (${usd(st.fixed)}/mo in total): ${recs}.
+Fixed monthly costs (${usd(st.fixed)}/mo in total${st.paidN? `; ${st.paidN} of them already paid this month — those payments are counted here, not in day-to-day` : ''}): ${recs}.
 ${incomeLine}
 ${wealthLine(wealth, st.total+st.fixed)}
 ${budget}`,
@@ -257,7 +263,7 @@ export function rangeAnalysisPrompt(settings, perMonth, prior, recurring, income
   const usd=v=>Math.round(v);
   const agg={byTag:{},byPerson:{},total:0,count:0,items:[]};
   for(const {st} of perMonth){ agg.total+=st.total; agg.count+=st.count; agg.items.push(...st.items); for(const [t,v] of Object.entries(st.byTag)) agg.byTag[t]=(agg.byTag[t]||0)+v; for(const [p,v] of Object.entries(st.byPerson)) agg.byPerson[p]=(agg.byPerson[p]||0)+v; }
-  const n=perMonth.length; const fixed=perMonth[0].st.fixed;
+  const n=perMonth.length; const fixedTotal=perMonth.reduce((a,p)=>a+p.st.fixed,0); const fixed=fixedTotal/n;   // what each month's fixed costs came to (paid where logged, planned otherwise)
   const tagLine=s=>Object.entries(s.byTag).sort((a,b)=>b[1]-a[1]).map(([t,v])=>`${t} ${usd(v)} (${usd(v/n)}/mo)`).join(', ')||'none';
   const perLine=s=>Object.entries(s.byPerson).map(([p,v])=>`${p} ${usd(v)}`).join(', ')||'none';
   const months=perMonth.map(({mk,st})=>`${monthLabel(mk)} ${usd(st.total)}`).join(', ');
@@ -271,8 +277,8 @@ export function rangeAnalysisPrompt(settings, perMonth, prior, recurring, income
 By category over the period: ${tagLine(agg)}. By person: ${perLine(agg)}.
 Largest single items: ${big}.
 ${priorLine}
-Fixed monthly costs (${usd(fixed)}/mo in total, ${usd(fixed*n)} over the period): ${recs}.
-${incomeUSD>0 ? `Household income: ${usd(incomeUSD)} per month, ${usd(incomeUSD*n)} over the period; left over after all spending: ${usd(incomeUSD*n-agg.total-fixed*n)} (${Math.round((incomeUSD*n-agg.total-fixed*n)/(incomeUSD*n)*100)}% of income).` : 'Income not recorded.'}
+Fixed monthly costs (${usd(fixed)}/mo on average, ${usd(fixedTotal)} over the period; logged payments of these are counted here, not in day-to-day): ${recs}.
+${incomeUSD>0 ? `Household income: ${usd(incomeUSD)} per month, ${usd(incomeUSD*n)} over the period; left over after all spending: ${usd(incomeUSD*n-agg.total-fixedTotal)} (${Math.round((incomeUSD*n-agg.total-fixedTotal)/(incomeUSD*n)*100)}% of income).` : 'Income not recorded.'}
 ${wealthLine(wealth, agg.total/n+fixed)}
 ${budget}`,
   };

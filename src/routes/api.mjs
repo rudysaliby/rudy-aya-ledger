@@ -3,6 +3,7 @@ import { HttpError, checkAuth, json, text, getSettings, getMonth, getRecurring, 
   parseNote, saveExpenses, toUSD, todayIn, shiftMonth, monthStats, analysisPrompt, rangeAnalysisPrompt, claudeMessage, analysisModel, newId, TAGS, CURRENCIES, DEFAULT_SETTINGS } from "../lib/ledger.mjs";
 import { getMoves, saveMove, deleteMove, accountOfType, confirmBalance, advanceBaseline, reconcile, monthCheck, rollStatements, mergeDuplicateCash, withSync, MOVE_KINDS } from "../lib/flow.mjs";
 import { bookItems, resolveAcc } from "../lib/book.mjs";
+import { splitFixed } from "../lib/fixed.mjs";
 
 
 export default async (req) => {
@@ -54,6 +55,8 @@ export default async (req) => {
       let newFrom = e.from===undefined? (old.from||null) : (e.from||null);
       if(newFrom==='none') newFrom=null; else if(newFrom==='auto'){ const accs=await getAccounts(); const owner=e.by||old.by||body.by||''; newFrom=await resolveAcc(settings, accs, (settings.defaultPaid||{})[owner]||'cash', owner); }
       const doc={...old, amount:Number(e.amount)||0, currency:cur, usd:toUSD(settings,e.amount,cur), desc:String(e.desc||'').slice(0,80)||'Expense', tag:TAGS.includes(e.tag)?e.tag:'Other', by:String(e.by||'').slice(0,40), date, month:to, note:e.note?String(e.note).slice(0,200):null, from:newFrom};
+      // "counts as": set by hand to a fixed cost from the Plan (recId), to day-to-day (recId ''), or left to be recognised (recSet null)
+      if(e.recSet!==undefined){ if(e.recSet==='user'){ const id=String(e.recId||''); if(id && !(await getRecurring()).some(r=>r.id===id)) throw new HttpError(400,'That fixed cost no longer exists'); doc.recId=id||null; doc.recSet='user'; } else { delete doc.recId; delete doc.recSet; } }
       await withSync(settings, today, [old.from, newFrom], async()=>{
         if(to===from){ await mutateList('months/'+from, items=>items.map(x=>x.id===e.id?doc:x)); }
         else { // add to the new month before removing from the old one: a failure in between leaves a duplicate, never a loss
@@ -168,21 +171,24 @@ export default async (req) => {
       const only = items => by? items.filter(e=>String(e.by||'').trim().toLowerCase()===by.toLowerCase()) : items;
       const recurring = by? recurringAll.filter(r=>share(r)>0).map(r=>{ const s=share(r); return s===1? r : {...r, amount:Number(r.amount||0)*s, name:r.name+' (shared, split)'}; }) : recurringAll;
       const incomeUSD=incomeMonthlyUSD(settings, by? incomeAll.filter(i=>share(i)>0).map(i=>({...i, amount:Number(i.amount||0)*share(i)})) : incomeAll);
+      // payments of fixed costs that were logged as expenses count as the fixed cost, not as day-to-day (recognised on the full month, before the person filter)
+      const recsForLinks = recurringAll.map(r=>{ const u=toUSD(settings,r.amount,r.currency); return {id:r.id, name:r.name, period:r.period, active:r.active, monthlyUSD: r.period==='yearly'? u/12 : u}; });
+      const prep = items => { const {dayToDay, paidBy} = splitFixed(items, recsForLinks); return {items: only(dayToDay), paidBy: by? {} : paidBy}; };
       let nw=null;
       if(!by){ nw=netWorth(settings, accounts); nw.liquid=accounts.filter(a=>a.active!==false && ['cash','bank','savings'].includes(a.type) && bucketOf(a)==='spending').reduce((t,a)=>t+accountUSD(settings,a),0); nw.saved=accounts.filter(a=>a.active!==false && !LIABILITY_TYPES.includes(a.type) && bucketOf(a)==='saved').reduce((t,a)=>t+accountUSD(settings,a),0);
         try{ const ck=await monthCheck(settings, today.slice(0,7), accounts, [], today); nw.savedThisMonth=ck.savedUSD; }catch(e){} }
       let p;
       if(months.length===1){
         const mk=months[0];
-        const [cur, m1, m2] = (await Promise.all([getMonth(mk), getMonth(shiftMonth(mk,-1)), getMonth(shiftMonth(mk,-2))])).map(only);
-        const st=monthStats(settings,cur,recurring,mk,today), s1=monthStats(settings,m1,recurring,shiftMonth(mk,-1),today), s2=monthStats(settings,m2,recurring,shiftMonth(mk,-2),today);
+        const [cur, m1, m2] = (await Promise.all([getMonth(mk), getMonth(shiftMonth(mk,-1)), getMonth(shiftMonth(mk,-2))])).map(prep);
+        const st=monthStats(settings,cur.items,recurring,mk,today,cur.paidBy), s1=monthStats(settings,m1.items,recurring,shiftMonth(mk,-1),today,m1.paidBy), s2=monthStats(settings,m2.items,recurring,shiftMonth(mk,-2),today,m2.paidBy);
         if(!st.count && !recurring.length) return text(by? `Nothing of ${by}'s to analyze yet in this month.` : 'Nothing to analyze yet. Log a few expenses first.');
         p=analysisPrompt(settings, mk, st, s1, s2, recurring, today, incomeUSD, nw, by);
       } else {
         const n=months.length; const priorKeys=[]; for(let i=n;i>=1;i--) priorKeys.push(shiftMonth(months[0],-i));
-        const docs=(await Promise.all([...months, ...priorKeys].map(k=>getMonth(k)))).map(only);
-        const perMonth=months.map((mk,i)=>({mk, st:monthStats(settings,docs[i],recurring,mk,today)}));
-        const prior={total:0,byTag:{}}; priorKeys.forEach((mk,i)=>{ const st=monthStats(settings,docs[n+i],recurring,mk,today); prior.total+=st.total; for(const [t,v] of Object.entries(st.byTag)) prior.byTag[t]=(prior.byTag[t]||0)+v; });
+        const docs=(await Promise.all([...months, ...priorKeys].map(k=>getMonth(k)))).map(prep);
+        const perMonth=months.map((mk,i)=>({mk, st:monthStats(settings,docs[i].items,recurring,mk,today,docs[i].paidBy)}));
+        const prior={total:0,byTag:{}}; priorKeys.forEach((mk,i)=>{ const st=monthStats(settings,docs[n+i].items,recurring,mk,today,docs[n+i].paidBy); prior.total+=st.total; for(const [t,v] of Object.entries(st.byTag)) prior.byTag[t]=(prior.byTag[t]||0)+v; });
         if(!perMonth.some(x=>x.st.count) && !recurring.length) return text(by? `Nothing of ${by}'s to analyze yet in these months.` : 'Nothing to analyze yet. Log a few expenses first.');
         p=rangeAnalysisPrompt(settings, perMonth, prior, recurring, incomeUSD, nw, by);
       }
