@@ -191,8 +191,8 @@ function renderHistory(){
   $('hFilters').innerHTML=chips;
   if(S.hFilter.by) ex=ex.filter(e=>e.by===S.hFilter.by); if(S.hFilter.tag) ex=ex.filter(e=>e.tag===S.hFilter.tag);
   ex=[...ex].sort((a,b)=>(b.date>a.date?1:b.date<a.date?-1:b.ts-a.ts));
-  const total=ex.reduce((a,e)=>a+e.usd,0);
-  $('hCount').textContent = ex.length+(ex.length===1?' expense':' expenses'); $('hTotal').textContent=fmtBase(total);
+  const total=ex.reduce((a,e)=>a+e.usd,0); const fixedPart=ex.filter(e=>fixedOf(e)).reduce((a,e)=>a+e.usd,0);   // payments of fixed costs: in this total, but not in Insights' day-to-day
+  $('hCount').textContent = ex.length+(ex.length===1?' expense':' expenses'); $('hTotal').innerHTML=esc(fmtBase(total))+(fixedPart? `<div class="muted" style="font-size:11.5px;font-weight:500;text-align:right;line-height:1.2">incl. ${esc(fmtShort(fixedPart))} fixed costs</div>` : '');
   S.visibleIds = ex.map(e=>e.id);
   $('selbar').classList.toggle('hide', !S.selectMode); $('hSelect').classList.toggle('hide', S.selectMode || !ex.length);
   if(S.selectMode){ const n=[...S.selected].filter(id=>S.visibleIds.includes(id)).length; $('selCount').textContent = n+' selected'; $('selDel').disabled=!n; $('selDel').textContent = n? 'Delete '+n : 'Delete'; $('selAll').textContent = n===ex.length && ex.length? 'Clear' : 'Select all'; }
