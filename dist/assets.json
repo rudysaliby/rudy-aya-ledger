@@ -1,5 +1,5 @@
 {
- "built": "2026-11-08T06:55:33.335Z",
+ "built": "2026-11-08T06:57:47.420Z",
  "files": {
   "/app.css": {
    "hash": "169a261f97e74a16a97dda6b638c6d08",
@@ -52,7 +52,7 @@
    "type": "image/svg+xml"
   },
   "/index.html": {
-   "hash": "accf833ffe9aff114756364814d641a7",
+   "hash": "aee63e62d0195aa242ddc269be9ba0c2",
    "size": 11735,
    "type": "text/html; charset=utf-8"
   },
