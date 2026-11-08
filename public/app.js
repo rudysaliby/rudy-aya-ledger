@@ -352,6 +352,46 @@ function highlightLines({per, agg, prior, who, isCur, st, all, members}){
   return out.slice(0,5);
 }
 
+/**
+ * The period at a glance: the all-in figure, a bar showing how the income is used (fixed costs → day-to-day so far →
+ * the rest of the month at the current pace → what is left), and three key figures underneath.
+ */
+function renderGlance({single, isCur, st, per, agg, prior, inc, who, n, recs, sharedRecs}){
+  const box=$('tiles'); const mk=S.range[S.range.length-1];
+  const fixed = single? st.fixed : agg.fixedTotal; const dtd = single? st.total : agg.total; const income = inc*n;
+  const canProject = isCur && st.elapsed>=3; const projDtd = canProject? projectedTotal(st) : dtd; const rest = Math.max(0, projDtd-dtd);
+  const allIn = dtd+fixed; const left = income>0? income-fixed-projDtd : null;
+  const track = Math.max(income, fixed+projDtd, 1); const w = v=>Math.max(0, v/track*100).toFixed(2)+'%';
+  const segs = [['fixed',fixed,'Fixed costs'],['dtd',dtd,'Day-to-day'],['rest',rest,'Rest of month ≈']];
+  if(left!=null && left>=0) segs.push(['left',left,'Left']);
+  // past the income line, whatever is spent shows in red
+  let pieces=[], run=0; for(const [c,v] of segs){ if(v<=0.5) continue; const cut = left!=null && left<0 ? Math.max(0, Math.min(v, income-run)) : v; if(cut>0.5) pieces.push([c,cut]); if(v-cut>0.5) pieces.push(['over',v-cut]); run+=v; }
+  const bar = pieces.map(([c,v])=>`<i class="${c}" style="width:${w(v)}"></i>`).join('');
+  const legend = segs.filter(x=>x[1]>0.5).map(([c,v,l])=>`<span><i class="sw ${c}"></i>${l} <b class="num">${esc(fmtShort(v))}</b></span>`).join('')+(left!=null && left<0? `<span><i class="sw over"></i>Over income <b class="num">${esc(fmtShort(-left))}</b></span>` : '');
+  const periodLabel = single? (isCur? monthShort(mk).split(' ')[0]+' so far' : monthLabel(mk)) : n+' months';
+  const right = income>0
+    ? `<div class="k">${isCur? (canProject? 'Left at month end' : 'Left so far') : 'Left over'}</div><div class="v" style="color:${left>=0?'var(--good)':'var(--bad)'}">${esc(fmtBase(Math.round(left)))}</div><div class="d">${Math.round(left/income*100)}% of ${esc(fmtShort(income))} income</div>`
+    : (isCur? `<div class="k">Month end at this pace</div><div class="v">${esc(fmtBase(Math.round(projDtd+fixed)))}</div><div class="d">${canProject? 'all in' : 'too early to project'}</div>` : `<div class="k">Per month</div><div class="v">${esc(fmtBase(Math.round(allIn/n)))}</div><div class="d">all in</div>`);
+  // three figures: day-to-day vs the period before, fixed costs, pace
+  let delta='';
+  if(prior.total>0 && !(isCur && st.elapsed<3)){ const base = isCur? prior.total*(st.elapsed/(prior.dim||st.dim)) : prior.total; const p=Math.round((dtd-base)/base*100); const vs = n===1? "vs last month" : `vs the ${n} months before`; delta = Math.abs(p)<1? `<span class="d">same ${vs}</span>` : `<span class="d ${p>0?'up':'down'}">${p>0?'▲':'▼'} ${Math.abs(p)}% ${vs}</span>`; }
+  if(!delta) delta=`<span class="d">${single? st.count : agg.count} items</span>`;
+  const fixedNote = (single && st.paidN? `${st.paidN} of ${recs.length} paid` : (single? recs.length+' recurring' : esc(fmtShort(fixed/n))+' a month'))+(sharedRecs? ' · shared split' : '');
+  let pace;
+  if(isCur) pace = `<span class="k">Pace</span><b>${esc(fmtShort(st.elapsed? dtd/st.elapsed : 0))}/day</b><span class="d">day ${st.elapsed} of ${st.dim}${canProject? ' · ends ≈ '+esc(fmtShort(projDtd+fixed)) : ''}</span>`;
+  else if(single) pace = `<span class="k">Daily average</span><b>${esc(fmtShort(dtd/st.dim))}/day</b><span class="d">${st.dim} days</span>`;
+  else { const totals=per.map(p=>p.st.total); const hi=per[totals.indexOf(Math.max(...totals))], lo=per[totals.indexOf(Math.min(...totals))]; pace = `<span class="k">Per month</span><b>${esc(fmtShort(dtd/n))}</b><span class="d">${esc(monthShort(hi.mk))} high · ${esc(monthShort(lo.mk))} low</span>`; }
+  box.innerHTML = `
+    <div class="g-head"><div><div class="k">All in · ${esc(periodLabel)}${who? ' · '+esc(who) : ''}</div><div class="big">${esc(fmtBase(Math.round(allIn)))}</div><div class="d">day-to-day + fixed costs, nothing counted twice</div></div><div class="g-right">${right}</div></div>
+    <div class="g-bar" role="img" aria-label="How the income is used">${bar}</div>
+    <div class="legend">${legend}</div>
+    <div class="g-stats">
+      <div><span class="k">Day-to-day</span><b>${esc(fmtBase(Math.round(dtd)))}</b>${delta}</div>
+      <div><span class="k">Fixed costs</span><b>${esc(fmtBase(Math.round(fixed)))}</b><span class="d">${fixedNote}</span></div>
+      <div>${pace}</div>
+    </div>`;
+}
+
 function renderInsights(){
   renderRange();
   S.range.forEach(ensureMonth);
@@ -361,50 +401,12 @@ function renderInsights(){
   const {per, agg, prior}=rangeStats(who); const all = who? rangeStats(null).agg : agg;   // household totals: shares, and stable category colours
   const st = single? per[0].st : null; const inc=incomeUSD(who);
   const recs=S.recurring.filter(r=>r.active!==false && shareOf(r,who)>0); const sharedRecs = who? recs.filter(r=>!String(r.by||'').trim()).length : 0;
-  const fixedNote = (st && st.paidN? `${st.paidN} of ${recs.length} paid · counted here, not in day-to-day` : recs.length+' recurring')+(sharedRecs? ' · shared ones split' : '');
-  // tiles
-  if(single){
-    const pvTotal=prior.total, pvDim=prior.dim||st.dim; const dailyAvg = st.elapsed? st.total/st.elapsed : 0; const projected = isCur ? projectedTotal(st) : st.total; const canProject = !isCur || st.elapsed>=3; const allIn = st.total+st.fixed;
-    const delta=(a,b)=>{ if(!b) return ''; const p=Math.round((a-b)/b*100); if(Math.abs(p)<1) return '<span class="d">same as last month</span>'; return `<span class="d ${p>0?'up':'down'}">${p>0?'▲':'▼'} ${Math.abs(p)}% vs last month</span>`; };
-    const left = inc - (isCur? projected : st.total) - st.fixed;
-    $('tiles').innerHTML = `
-      <div class="tile"><span class="k">All in</span><span class="v">${esc(fmtBase(allIn))}</span><span class="d">day-to-day + fixed costs, nothing twice${who? ' · '+esc(who) : ''}</span></div>
-      ${inc>0? `<div class="tile"><span class="k">${isCur? (canProject?'Left at month end':'Left so far') :'Left over'}</span><span class="v" style="color:${left>=0?'var(--good)':'var(--bad)'}">${esc(fmtBase(Math.round(left)))}</span><span class="d">${Math.round(left/inc*100)}% of ${esc(fmtShort(inc))} income</span></div>` : `<div class="tile"><span class="k">${isCur?'Projected':'Daily average'}</span><span class="v">${esc(fmtBase(Math.round(isCur? projected+st.fixed : (st.total/st.dim))))}</span><span class="d">${isCur? (canProject? fmtBase(Math.round(dailyAvg))+' a day' : 'so far · too early to project') : 'per day'}</span></div>`}
-      <div class="tile"><span class="k">Day-to-day</span><span class="v">${esc(fmtBase(st.total))}</span>${(isCur && st.elapsed<3 ? '' : delta(st.total, isCur? pvTotal*(st.elapsed/pvDim) : pvTotal))||'<span class="d">'+st.count+' items</span>'}</div>
-      <div class="tile"><span class="k">Fixed costs</span><span class="v">${esc(fmtBase(st.fixed))}</span><span class="d">${esc(fixedNote)}</span></div>
-      ${inc>0? `<div class="tile"><span class="k">${isCur?'Projected':'Daily average'}</span><span class="v">${esc(fmtBase(Math.round(isCur? projected+st.fixed : (st.total/st.dim))))}</span><span class="d">${isCur? (canProject? fmtBase(Math.round(dailyAvg))+' a day · '+st.elapsed+' of '+st.dim+' days' : 'so far · too early to project') : 'per day'}</span></div>
-      <div class="tile"><span class="k">Income</span><span class="v" style="color:var(--good)">${esc(fmtBase(Math.round(inc)))}</span><span class="d">per month${who? ' · '+esc(who)+"'s" : ''}</span></div>` : ''}`;
-  } else {
-    const totals=per.map(p=>p.st.total); const hi=per[totals.indexOf(Math.max(...totals))], lo=per[totals.indexOf(Math.min(...totals))];
-    const d = prior.total? Math.round((agg.total-prior.total)/prior.total*100) : null;
-    const left=inc*n-agg.total-agg.fixedTotal;
-    $('tiles').innerHTML = `
-      <div class="tile"><span class="k">All in</span><span class="v">${esc(fmtBase(agg.total+agg.fixedTotal))}</span><span class="d">${n} months, day-to-day + fixed, nothing twice${who? ' · '+esc(who) : ''}</span></div>
-      ${inc>0? `<div class="tile"><span class="k">Left over</span><span class="v" style="color:${left>=0?'var(--good)':'var(--bad)'}">${esc(fmtBase(Math.round(left)))}</span><span class="d">${Math.round(left/(inc*n)*100)}% of ${esc(fmtShort(inc*n))} income</span></div>` : `<div class="tile"><span class="k">Per month</span><span class="v">${esc(fmtBase(Math.round(agg.total/n)))}</span><span class="d">average day-to-day</span></div>`}
-      <div class="tile"><span class="k">Day-to-day</span><span class="v">${esc(fmtBase(agg.total))}</span>${d==null?'<span class="d">'+agg.count+' items</span>':`<span class="d ${d>0?'up':'down'}">${d>0?'▲':'▼'} ${Math.abs(d)}% vs the ${n} months before</span>`}</div>
-      <div class="tile"><span class="k">High / low</span><span class="v">${esc(fmtShort(hi.st.total))}<span class="muted" style="font-size:14px;font-weight:600"> / ${esc(fmtShort(lo.st.total))}</span></span><span class="d">${esc(monthShort(hi.mk))} / ${esc(monthShort(lo.mk))}</span></div>
-      ${inc>0? `<div class="tile"><span class="k">Per month</span><span class="v">${esc(fmtBase(Math.round(agg.total/n)))}</span><span class="d">average day-to-day</span></div>
-      <div class="tile"><span class="k">Income</span><span class="v" style="color:var(--good)">${esc(fmtBase(Math.round(inc*n)))}</span><span class="d">${esc(fmtShort(inc))} a month${who? ' · '+esc(who)+"'s" : ''}</span></div>` : ''}`;
-  }
+  renderGlance({single, isCur, st, per, agg, prior, inc, who, n, recs, sharedRecs});
   // budget (household-wide; typed in the base currency, everything else here is in USD)
   const bc=$('budgetCard'); const budget=(Number(S.settings.budget)||0)/rate(S.settings.base);
   if(budget>0 && !who && single){ bc.classList.remove('hide'); const used=st.total+st.fixed; const pct=Math.min(100,used/budget*100); const left=budget-used; bc.innerHTML=`<div class="row-between"><h2>Monthly budget</h2><span class="num" style="font-weight:700">${esc(fmtBase(used))} <span class="muted">/ ${esc(fmtBase(budget))}</span></span></div><div class="track"><i class="${used>budget?'over':''}" style="width:${pct}%"></i></div><div class="muted" style="font-size:13px">${used>budget? '<span style="color:var(--bad);font-weight:700">Over by '+esc(fmtBase(used-budget))+'</span>' : esc(fmtBase(left))+' left'+(isCur&&st.dim>st.elapsed? ' · '+esc(fmtBase(Math.round(Math.max(0,left)/(st.dim-st.elapsed))))+' a day for the rest of the month':'')}</div>`; }
   else if(budget>0 && !who){ bc.classList.remove('hide'); const used=agg.total+agg.fixedTotal; const cap=budget*agg.months; const pct=Math.min(100,used/cap*100); bc.innerHTML=`<div class="row-between"><h2>Budget over ${agg.months} months</h2><span class="num" style="font-weight:700">${esc(fmtBase(used))} <span class="muted">/ ${esc(fmtBase(cap))}</span></span></div><div class="track"><i class="${used>cap?'over':''}" style="width:${pct}%"></i></div><div class="muted" style="font-size:13px">${used>cap? '<span style="color:var(--bad);font-weight:700">Over by '+esc(fmtBase(used-cap))+'</span>' : esc(fmtBase(cap-used))+' under budget'}</div>`; }
   else bc.classList.add('hide');
-  // month check (current month, whole household): compares what was logged with how the balances actually moved
-  const ck=$('checkCard'); const c=S.check;
-  if(single && isCur && !who && c && c.month===mk){ ck.classList.remove('hide'); const allIn=c.spentUSD; const expected=c.incomeUSD+c.refundsUSD-allIn; const unexp = c.actualDelta==null? null : Math.round(c.actualDelta-expected-c.adjustUSD);
-    const gapsN=Object.values(S.recon).filter(r=>r.gap).length;
-    ck.innerHTML=`<div class="row-between"><h2>Month check</h2><span class="muted" style="font-size:12px">${esc(monthShort(mk))}</span></div>
-      <div class="line"><span>Income received</span><b>${esc(fmtBase(Math.round(c.incomeUSD)))}</b></div>
-      ${c.planned.length? `<div class="muted" style="font-size:12.5px;margin-top:-4px">${c.planned.map(p=>`${p.received?'✓':'·'} ${esc(p.name)}`).join(' · ')}</div>`:''}
-      <div class="line"><span>Spending logged</span><b>−${esc(fmtBase(Math.round(c.spentUSD)))}</b></div>
-      ${c.refundsUSD? `<div class="line"><span>Refunds</span><b>+${esc(fmtBase(Math.round(c.refundsUSD)))}</b></div>`:''}
-      ${c.savedUSD? `<div class="line"><span>Moved to long-term savings</span><b style="color:var(--good)">${esc(fmtBase(Math.round(c.savedUSD)))}</b></div>`:''}
-      <div class="line total"><span>Should have ${expected>=0?'grown':'shrunk'} by</span><b>${esc(fmtBase(Math.round(Math.abs(expected))))}</b></div>
-      ${c.actualDelta==null? `<div class="unexp">Balances have ${esc(c.startDate? 'no reading before '+monthShort(mk) : 'no history yet')}; the check compares from next month.</div>` : `<div class="line"><span>Balances actually moved</span><b>${c.actualDelta>=0?'+':'−'}${esc(fmtBase(Math.round(Math.abs(c.actualDelta))))}</b></div>
-      <div class="unexp ${Math.abs(unexp)<Math.max(20,0.02*allIn)?'ok':''}">${Math.abs(unexp)<Math.max(20,0.02*allIn)? 'Everything lines up.' : (unexp<0? esc(fmtBase(Math.abs(unexp)))+' left your accounts without being logged.' : esc(fmtBase(unexp))+' arrived that is not logged as income.')}${gapsN? ' '+gapsN+' account'+(gapsN>1?'s':'')+' need a look in Wealth.' : ''}</div>`}`; }
-  else ck.classList.add('hide');
   // what stands out
   const lines=highlightLines({per, agg, prior, who, isCur, st, all, members});
   $('hlList').innerHTML = lines.length? lines.map(h=>`<li><span class="ic" aria-hidden="true">${h.icon}</span><span>${h.html}</span></li>`).join('') : `<li><span class="ic" aria-hidden="true">✨</span><span class="muted">${agg.loading? 'Loading…' : 'Log a few expenses and the patterns show up here.'}</span></li>`;
