@@ -219,13 +219,15 @@ function openRecurringSheet(r){
     <div class="grid2"><div class="field"><label for="r-amount">Amount</label><input class="num" id="r-amount" type="number" inputmode="decimal" step="any" value="${esc(r.amount)}" placeholder="0"></div>
     <div class="field"><label for="r-cur">Currency</label><select id="r-cur">${CURRENCIES.map(c=>`<option ${c===r.currency?'selected':''}>${c}</option>`).join('')}</select></div></div>
     <div class="field"><label>Billed</label><div class="seg" id="r-period"><button type="button" class="${r.period!=='yearly'?'on':''}" data-p="monthly">Monthly</button><button type="button" class="${r.period==='yearly'?'on':''}" data-p="yearly">Yearly</button></div><div class="muted" style="font-size:12.5px" id="r-permonth"></div></div>
+    <div class="field"><label>Amount</label><div class="seg" id="r-var"><button type="button" class="${!r.variable?'on':''}" data-v="0">Same every time</button><button type="button" class="${r.variable?'on':''}" data-v="1">Varies</button></div><div class="muted" style="font-size:12.5px" id="r-varhelp">${r.variable? 'Electricity, water… Type a typical amount: it is used until the bill is logged, then the real payment counts, whatever its size.' : 'A logged payment with this name and about this amount counts as this cost, not as day-to-day.'}</div></div>
     <div class="field"><label>Type</label><div class="chips">${chipsHTML('kind',KINDS.map(k=>k[1]),(KINDS.find(k=>k[0]===(r.kind||'other'))||KINDS[5])[1])}</div></div>
     <div class="grid2"><div class="field"><label>Paid by</label><div class="chips">${chipsHTML('by',members,r.by,true)}</div></div>
     <div class="field"><label for="r-day">Day of month</label><input id="r-day" type="number" inputmode="numeric" min="1" max="31" value="${esc(r.day||'')}" placeholder="Optional"></div></div>
     <div class="field"><label for="r-active">Status</label><select id="r-active"><option value="1" ${r.active!==false?'selected':''}>Active</option><option value="0" ${r.active===false?'selected':''}>Paused</option></select></div>
     <div class="actions"><div>${isNew?'':'<button type="button" class="danger" id="r-del">Delete</button>'}</div><div class="right"><button type="button" class="secondary" id="r-cancel">Cancel</button><button type="button" class="primary" id="r-save">${isNew?'Add':'Save'}</button></div></div>
   </div>`, root=>{
-    wireChips(root); let period=r.period==='yearly'?'yearly':'monthly';
+    wireChips(root); let period=r.period==='yearly'?'yearly':'monthly'; let variable=!!r.variable;
+    root.querySelectorAll('#r-var button').forEach(b=>b.onclick=()=>{ variable=b.dataset.v==='1'; root.querySelectorAll('#r-var button').forEach(x=>x.classList.toggle('on',x===b)); $('r-varhelp').textContent = variable? 'Electricity, water… Type a typical amount: it is used until the bill is logged, then the real payment counts, whatever its size.' : 'A logged payment with this name and about this amount counts as this cost, not as day-to-day.'; });
     const upd=()=>{ const a=Number($('r-amount').value)||0; $('r-permonth').textContent = period==='yearly'&&a? '≈ '+fmtAmt(a/12,$('r-cur').value)+' per month in the totals' : (period==='monthly'&&a? fmtAmt(a*12,$('r-cur').value)+' a year':''); };
     root.querySelectorAll('#r-period button').forEach(b=>b.onclick=()=>{ period=b.dataset.p; root.querySelectorAll('#r-period button').forEach(x=>x.classList.toggle('on',x===b)); upd(); });
     $('r-amount').oninput=upd; $('r-cur').onchange=upd; upd(); if(isNew) setTimeout(()=>$('r-name').focus(),300);
@@ -233,7 +235,7 @@ function openRecurringSheet(r){
     if(!isNew) $('r-del').onclick=async()=>{ if($('r-del').dataset.arm){ try{ const d=await api('recurring',{method:'DELETE',body:{id:r.id}}); S.recurring=d.recurring||[]; closeSheet(); toast('Deleted'); render(); }catch(err){ toast(errMsg(err)); } } else { $('r-del').dataset.arm='1'; $('r-del').textContent='Tap again to delete'; } };
     $('r-save').onclick=async()=>{ const name=$('r-name').value.trim(); const amount=Number($('r-amount').value); if(!name){ $('r-name').focus(); return; } if(!(amount>0)){ $('r-amount').focus(); return; }
       const kind=(KINDS.find(k=>k[1]===chipVal(root,'kind'))||['other'])[0];
-      const item={ id:r.id, name, amount, currency:$('r-cur').value, period, kind, by:chipVal(root,'by')||'', day:Number($('r-day').value)||null, active:$('r-active').value==='1', ts:r.ts };
+      const item={ id:r.id, name, amount, currency:$('r-cur').value, period, kind, by:chipVal(root,'by')||'', day:Number($('r-day').value)||null, variable, active:$('r-active').value==='1', ts:r.ts };
       $('r-save').disabled=true; try{ const d=await api('recurring',{method:'POST',body:{item}}); S.recurring=d.recurring||S.recurring; closeSheet(); toast('Saved '+name); render(); }catch(err){ toast(errMsg(err)); $('r-save').disabled=false; } };
   });
 }

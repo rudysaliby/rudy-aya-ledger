@@ -142,7 +142,7 @@ export default async (req) => {
     // ---- recurring ----
     if(route==='recurring' && req.method==='POST'){
       const r=body.item||{};
-      const doc={ id:r.id||newId(), name:String(r.name||'').slice(0,60)||'Untitled', amount:Number(r.amount)||0, currency:CURRENCIES.includes(r.currency)?r.currency:settings.base, period:r.period==='yearly'?'yearly':'monthly', kind:String(r.kind||'other'), by:String(r.by||'').slice(0,40), day:Number(r.day)||null, active:r.active!==false, ts:r.ts||Date.now() };
+      const doc={ id:r.id||newId(), name:String(r.name||'').slice(0,60)||'Untitled', amount:Number(r.amount)||0, currency:CURRENCIES.includes(r.currency)?r.currency:settings.base, period:r.period==='yearly'?'yearly':'monthly', kind:String(r.kind||'other'), by:String(r.by||'').slice(0,40), day:Number(r.day)||null, variable:!!r.variable, active:r.active!==false, ts:r.ts||Date.now() };
       const items=await mutateList('recurring', items=>{ const i=items.findIndex(x=>x.id===doc.id); if(i>=0) items[i]=doc; else items.push(doc); return items; });
       return json({saved:doc, recurring:items});
     }
@@ -172,7 +172,7 @@ export default async (req) => {
       const recurring = by? recurringAll.filter(r=>share(r)>0).map(r=>{ const s=share(r); return s===1? r : {...r, amount:Number(r.amount||0)*s, name:r.name+' (shared, split)'}; }) : recurringAll;
       const incomeUSD=incomeMonthlyUSD(settings, by? incomeAll.filter(i=>share(i)>0).map(i=>({...i, amount:Number(i.amount||0)*share(i)})) : incomeAll);
       // payments of fixed costs that were logged as expenses count as the fixed cost, not as day-to-day (recognised on the full month, before the person filter)
-      const recsForLinks = recurringAll.map(r=>{ const u=toUSD(settings,r.amount,r.currency); return {id:r.id, name:r.name, period:r.period, active:r.active, monthlyUSD: r.period==='yearly'? u/12 : u}; });
+      const recsForLinks = recurringAll.map(r=>{ const u=toUSD(settings,r.amount,r.currency); return {id:r.id, name:r.name, period:r.period, active:r.active, variable:!!r.variable, monthlyUSD: r.period==='yearly'? u/12 : u}; });
       const prep = items => { const {dayToDay, paidBy} = splitFixed(items, recsForLinks); return {items: only(dayToDay), paidBy: by? {} : paidBy}; };
       let nw=null;
       if(!by){ nw=netWorth(settings, accounts); nw.liquid=accounts.filter(a=>a.active!==false && ['cash','bank','savings'].includes(a.type) && bucketOf(a)==='spending').reduce((t,a)=>t+accountUSD(settings,a),0); nw.saved=accounts.filter(a=>a.active!==false && !LIABILITY_TYPES.includes(a.type) && bucketOf(a)==='saved').reduce((t,a)=>t+accountUSD(settings,a),0);

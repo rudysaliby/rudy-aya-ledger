@@ -232,7 +232,7 @@ export function analysisPrompt(settings, mk, st, m1, m2, recurring, today, incom
   const tagLine=s=>Object.entries(s.byTag).sort((a,b)=>b[1]-a[1]).map(([t,v])=>`${t} ${usd(v)}`).join(', ')||'none';
   const perLine=s=>Object.entries(s.byPerson).map(([p,v])=>`${p} ${usd(v)}`).join(', ')||'none';
   const big=[...st.items].sort((a,b)=>b.usd-a.usd).slice(0,8).map(e=>`${e.date.slice(5)} ${e.desc} (${e.tag}, ${e.by||'?'}) ${usd(e.usd)}`).join('; ')||'none';
-  const recs=recurring.filter(r=>r.active!==false).map(r=>{ const u=toUSD(settings,r.amount,r.currency); return `${r.name} [${r.kind||'other'}] ${usd(r.period==='yearly'?u/12:u)}/mo${r.period==='yearly'?' (billed yearly)':''}`; }).join('; ')||'none';
+  const recs=recurring.filter(r=>r.active!==false).map(r=>{ const u=toUSD(settings,r.amount,r.currency); return `${r.name} [${r.kind||'other'}] ${r.variable?'≈':''}${usd(r.period==='yearly'?u/12:u)}/mo${r.period==='yearly'?' (billed yearly)':''}${r.variable?' (varies month to month)':''}`; }).join('; ')||'none';
   const budget=Number(settings.budget)? `Monthly budget: ${usd(toUSD(settings, settings.budget, settings.base))}.` : 'No budget set.';
   const projected = st.elapsed>=3? st.total/st.elapsed*st.dim : st.total;   // before day 3 a projection says nothing
   const incomeLine = incomeUSD>0 ? `Household income: ${usd(incomeUSD)} per month. Projected left over this month after day-to-day and fixed costs: ${usd(incomeUSD-projected-st.fixed)} (${Math.round((incomeUSD-projected-st.fixed)/incomeUSD*100)}% of income).` : 'Income not recorded.';
@@ -268,7 +268,7 @@ export function rangeAnalysisPrompt(settings, perMonth, prior, recurring, income
   const perLine=s=>Object.entries(s.byPerson).map(([p,v])=>`${p} ${usd(v)}`).join(', ')||'none';
   const months=perMonth.map(({mk,st})=>`${monthLabel(mk)} ${usd(st.total)}`).join(', ');
   const big=[...agg.items].sort((a,b)=>b.usd-a.usd).slice(0,8).map(e=>`${e.date} ${e.desc} (${e.tag}, ${e.by||'?'}) ${usd(e.usd)}`).join('; ')||'none';
-  const recs=recurring.filter(r=>r.active!==false).map(r=>{ const u=toUSD(settings,r.amount,r.currency); return `${r.name} [${r.kind||'other'}] ${usd(r.period==='yearly'?u/12:u)}/mo`; }).join('; ')||'none';
+  const recs=recurring.filter(r=>r.active!==false).map(r=>{ const u=toUSD(settings,r.amount,r.currency); return `${r.name} [${r.kind||'other'}] ${r.variable?'≈':''}${usd(r.period==='yearly'?u/12:u)}/mo${r.variable?' (varies)':''}`; }).join('; ')||'none';
   const budget=Number(settings.budget)? `Monthly budget: ${usd(toUSD(settings, settings.budget, settings.base))}.` : 'No budget set.';
   const priorLine = prior && prior.total ? `The ${n} months before that: day-to-day total ${usd(prior.total)} (${usd(prior.total/n)}/mo); by category: ${Object.entries(prior.byTag).sort((a,b)=>b[1]-a[1]).map(([t,v])=>`${t} ${usd(v)}`).join(', ')||'none'}.` : 'No data for the months before this range.';
   return {

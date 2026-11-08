@@ -5,8 +5,9 @@
 /**
  * Which logged expenses are payments of a fixed cost. A choice made by hand (recSet 'user') always wins. Otherwise,
  * for each fixed cost and month, the first expense whose description names it (as a whole word) and whose amount is
- * close to it — within 30%, within 50% when the whole name matches, or the full yearly amount — is taken.
- * `recs`: [{id, name, period, active, monthlyUSD}]. Returns a Map of expense id → fixed cost id.
+ * close to it — within 30%, within 50% when the whole name matches, or the full yearly amount — is taken; a cost marked
+ * `variable` (electricity, water…) needs only the name, whatever the amount.
+ * `recs`: [{id, name, period, active, variable, monthlyUSD}]. Returns a Map of expense id → fixed cost id.
  */
 export function linkFixed(items, recs){
   const STOP=new Set(['the','and','for','bill','bills','fee','fees','monthly','yearly','payment','subscription','plan','with','from','per','month','year']);
@@ -17,9 +18,10 @@ export function linkFixed(items, recs){
   const rest=items.filter(e=>e.recSet!=='user').sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:(a.ts||0)-(b.ts||0));
   for(const e of rest){ const d=norm(e.desc)+norm(e.note); let best=null;
     for(const c of cands){ if(taken.has(c.r.id+'|'+e.month)) continue;
-      const whole=d.includes(c.n); if(!whole && !c.tokens.some(t=>d.includes(' '+t+' '))) continue;
+      const whole=d.includes(c.n); const toks=c.tokens.filter(t=>d.includes(' '+t+' ')).length; if(!whole && !toks) continue;
       const m=c.r.monthlyUSD, full=c.r.period==='yearly'? m*12 : m;
-      if(!(near(e.usd,m,whole?0.5:0.3) || (c.r.period==='yearly' && near(e.usd,full,0.3)))) continue;
+      if(c.r.variable){ if((!whole && toks<c.tokens.length) || e.usd<0.25*m) continue; }   // a bill that varies: its whole name, any amount above a quarter of the typical one
+      else if(!(near(e.usd,m,whole?0.5:0.3) || (c.r.period==='yearly' && near(e.usd,full,0.3)))) continue;
       const score=(whole?2:1)+((near(e.usd,m,0.1)||near(e.usd,full,0.1))?1:0); if(!best||score>best.score) best={id:c.r.id,score}; }
     if(best){ links.set(e.id,best.id); taken.add(best.id+'|'+e.month); } }
   return links;

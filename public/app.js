@@ -121,7 +121,7 @@ function projectedTotal(st){ return st.elapsed>=3 ? st.total/st.elapsed*st.dim :
  * counted once — as the fixed cost — and not again as day-to-day. Same function as src/lib/fixed.mjs; keep them equal.
  * A choice made by hand (recSet 'user') always wins. Otherwise, for each fixed cost and month, the first expense whose
  * description names it (as a whole word) and whose amount is close to it — within 30%, within 50% when the whole name
- * matches, or the full yearly amount — is taken. Returns a Map of expense id → fixed cost id.
+ * matches, or the full yearly amount — is taken; a cost marked `variable` needs only the name. Returns a Map of expense id → fixed cost id.
  */
 function linkFixed(items, recs){
   const STOP=new Set(['the','and','for','bill','bills','fee','fees','monthly','yearly','payment','subscription','plan','with','from','per','month','year']);
@@ -132,14 +132,15 @@ function linkFixed(items, recs){
   const rest=items.filter(e=>e.recSet!=='user').sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:(a.ts||0)-(b.ts||0));
   for(const e of rest){ const d=norm(e.desc)+norm(e.note); let best=null;
     for(const c of cands){ if(taken.has(c.r.id+'|'+e.month)) continue;
-      const whole=d.includes(c.n); if(!whole && !c.tokens.some(t=>d.includes(' '+t+' '))) continue;
+      const whole=d.includes(c.n); const toks=c.tokens.filter(t=>d.includes(' '+t+' ')).length; if(!whole && !toks) continue;
       const m=c.r.monthlyUSD, full=c.r.period==='yearly'? m*12 : m;
-      if(!(near(e.usd,m,whole?0.5:0.3) || (c.r.period==='yearly' && near(e.usd,full,0.3)))) continue;
+      if(c.r.variable){ if((!whole && toks<c.tokens.length) || e.usd<0.25*m) continue; }   // a bill that varies: its whole name, any amount above a quarter of the typical one
+      else if(!(near(e.usd,m,whole?0.5:0.3) || (c.r.period==='yearly' && near(e.usd,full,0.3)))) continue;
       const score=(whole?2:1)+((near(e.usd,m,0.1)||near(e.usd,full,0.1))?1:0); if(!best||score>best.score) best={id:c.r.id,score}; }
     if(best){ links.set(e.id,best.id); taken.add(best.id+'|'+e.month); } }
   return links;
 }
-const recsForLinks=()=>S.recurring.map(r=>({id:r.id, name:r.name, period:r.period, active:r.active, monthlyUSD:recMonthlyUSD(r)}));
+const recsForLinks=()=>S.recurring.map(r=>({id:r.id, name:r.name, period:r.period, active:r.active, variable:!!r.variable, monthlyUSD:recMonthlyUSD(r)}));
 /** Fixed-cost links for one month's expenses (expense id → fixed cost id). */
 let _links={};   // per render: month → links, so list rows do not recompute them
 function monthLinks(mk){ return _links[mk] || (_links[mk]=linkFixed(monthItems(mk), recsForLinks())); }
@@ -224,8 +225,8 @@ function renderPlan(){
   let html='';
   for(const [kind,label] of KINDS){ const items=S.recurring.filter(r=>(r.kind||'other')===kind).sort((a,b)=>recMonthlyUSD(b)-recMonthlyUSD(a)); if(!items.length) continue; const sub=items.filter(r=>r.active!==false).reduce((a,r)=>a+recMonthlyUSD(r),0);
     html+=`<div><div class="row-between" style="margin-bottom:6px"><h2>${label}</h2><span class="num muted" style="font-size:13px">${esc(fmtShort(sub))}/mo</span></div><ul class="list">`+items.map(r=>{ const m=recMonthlyUSD(r); const off=r.active===false;
-      const pay=payOf[r.id]; const differs = pay && [m, m*12].every(v=>Math.abs(pay.usd-v)>Math.max(1,0.02*v)); const paid = pay? ` · <span class="paid">✓ paid ${esc(dayLabel(pay.date))}${differs? ' · '+esc(fmtBase(pay.usd)) : ''}</span>` : '';
-      return `<li class="tap" data-rec="${esc(r.id)}" style="${off?'opacity:.5':''}"><div class="main"><div class="desc">${esc(r.name)}</div><div class="meta"><span class="pill ${r.period==='yearly'?'yr':''}">${r.period==='yearly'?'Yearly':'Monthly'}</span> ${r.period==='yearly'?'≈ '+esc(fmtBase(m))+'/mo':''}${r.day?' · day '+esc(r.day):''}${r.by?' · '+esc(r.by):''}${off?' · paused':''}${paid}</div></div><div class="amt">${esc(fmtAmt(r.amount,r.currency))}<small>${r.period==='yearly'?'per year':'per month'}</small></div></li>`; }).join('')+'</ul></div>'; }
+      const pay=payOf[r.id]; const differs = pay && (r.variable || [m, m*12].every(v=>Math.abs(pay.usd-v)>Math.max(1,0.02*v))); const paid = pay? ` · <span class="paid">✓ paid ${esc(dayLabel(pay.date))}${differs? ' · '+esc(fmtBase(pay.usd)) : ''}</span>` : '';
+      return `<li class="tap" data-rec="${esc(r.id)}" style="${off?'opacity:.5':''}"><div class="main"><div class="desc">${esc(r.name)}</div><div class="meta"><span class="pill ${r.period==='yearly'?'yr':''}">${r.period==='yearly'?'Yearly':'Monthly'}</span>${r.variable? ' <span class="pill">varies</span>' : ''} ${r.period==='yearly'?'≈ '+esc(fmtBase(m))+'/mo': (r.variable? '≈ typical' : '')}${r.day?' · day '+esc(r.day):''}${r.by?' · '+esc(r.by):''}${off?' · paused':''}${paid}</div></div><div class="amt">${esc(fmtAmt(r.amount,r.currency))}<small>${r.period==='yearly'?'per year':'per month'}</small></div></li>`; }).join('')+'</ul></div>'; }
   g.innerHTML=html;
 }
 
